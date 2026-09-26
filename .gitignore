@@ -99,3 +99,6 @@ state/
 
 # Local config overrides
 config.local.*
+
+# Upstream inspection and OpenVR SDK
+.cache/

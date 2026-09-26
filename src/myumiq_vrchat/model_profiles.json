@@ -1,0 +1,144 @@
+{
+  "local": {
+    "speech": {
+      "adapter": "local_chat",
+      "base_url": "http://127.0.0.1:18487/v1",
+      "model": "LiquidAI/LFM2.5-1.2B-JP-202606",
+      "timeout_s": 15,
+      "max_tokens": 512,
+      "structured_output": true
+    },
+    "thought": {
+      "adapter": "local_chat",
+      "base_url": "http://127.0.0.1:18488/v1",
+      "model": "google/gemma-4-26B-A4B-it",
+      "timeout_s": 20,
+      "max_tokens": 1024,
+      "structured_output": true
+    },
+    "decision": {
+      "selection": {
+        "llm": {
+          "adapter": "local_chat",
+          "base_url": "http://127.0.0.1:18488/v1",
+          "model": "google/gemma-4-26B-A4B-it",
+          "timeout_s": 5,
+          "max_tokens": 256,
+          "structured_output": true
+        },
+        "allow_state_only": true
+      },
+      "max_age_s": 5
+    }
+  },
+  "openrouter": {
+    "speech": {
+      "adapter": "openrouter_chat",
+      "model": "google/gemma-4-31b-it",
+      "route": {
+        "provider": "coreweave/fp4",
+        "max_prompt_price": 0.2,
+        "max_completion_price": 0.5
+      },
+      "api_key_env": "OPENROUTER_API_KEY",
+      "timeout_s": 15,
+      "max_tokens": 512,
+      "reasoning": {
+        "enabled": false
+      }
+    },
+    "thought": {
+      "adapter": "openrouter_chat",
+      "model": "google/gemma-4-26b-a4b-it",
+      "route": {
+        "provider": "deepinfra/fp8",
+        "max_prompt_price": 0.2,
+        "max_completion_price": 0.5
+      },
+      "api_key_env": "OPENROUTER_API_KEY",
+      "timeout_s": 20,
+      "max_tokens": 1024,
+      "reasoning": {
+        "enabled": false
+      }
+    },
+    "decision": {
+      "backend": {
+        "backend": "jev_openrouter",
+        "jev_model": "typesafe/jev-1.13",
+        "expected_model": "typesafe/jev-1.13-20260917",
+        "route": {
+          "provider": "typesafe",
+          "max_prompt_price": 0.2,
+          "max_completion_price": 0.5
+        },
+        "api_key_env": "OPENROUTER_API_KEY",
+        "allow_state_only": true,
+        "timeout_s": 5
+      },
+      "max_age_s": 5
+    }
+  },
+  "openrouter-vision": {
+    "speech": {
+      "adapter": "openrouter_chat",
+      "model": "google/gemma-4-31b-it",
+      "route": {
+        "provider": "coreweave/fp4",
+        "max_prompt_price": 0.2,
+        "max_completion_price": 0.5
+      },
+      "api_key_env": "OPENROUTER_API_KEY",
+      "timeout_s": 15,
+      "max_tokens": 512,
+      "reasoning": {
+        "enabled": false
+      }
+    },
+    "thought": {
+      "adapter": "openrouter_chat",
+      "model": "google/gemma-4-26b-a4b-it",
+      "route": {
+        "provider": "nextbit/bf16",
+        "max_prompt_price": 0.2,
+        "max_completion_price": 0.5
+      },
+      "api_key_env": "OPENROUTER_API_KEY",
+      "timeout_s": 20,
+      "max_tokens": 1024,
+      "reasoning": {
+        "enabled": false
+      }
+    },
+    "decision": {
+      "selection": {
+        "llm": {
+          "adapter": "openrouter_chat",
+          "model": "google/gemma-4-26b-a4b-it",
+          "route": {
+            "provider": "nextbit/bf16",
+            "max_prompt_price": 0.2,
+            "max_completion_price": 0.5
+          },
+          "api_key_env": "OPENROUTER_API_KEY",
+          "timeout_s": 12,
+          "max_tokens": 512,
+          "reasoning": {
+            "enabled": false
+          }
+        },
+        "allow_state_only": true,
+        "use_image": true,
+        "understand_requests": true
+      },
+      "max_age_s": 15,
+      "refresh_s": 5
+    },
+    "dialogue": {
+      "use_image": true,
+      "max_image_age_s": 3,
+      "action_wait_s": 4
+    },
+    "planner_use_image": true
+  }
+}

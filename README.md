@@ -1,10 +1,105 @@
 # MyuMIQ-VRChat
 
+設計見直しの入口: [課題・継続する目的・会話/身体/学習の構成と移行順](docs/runtime-redesign.md)。
+入力継続性、姿勢保持、経験からの候補学習の実装と、残る複合BodyGoal・自動採用を区別しています。
+会話の並列化・一文単位の音声送信、60Hzの出力合成、30Hzの連続移動への変更は
+[多周期構成への移行](docs/architecture.md#multi-rate-migration-2026-09-26)を参照。
+actorの先読み・MotionBuffer・高速視覚追跡と実機での受入確認は残っています。
+視界を使う会話と行動判断、要求の採否、停止の保持は
+[視界・会話・行動の接続](docs/visual-conversation-actions.md)を参照。
+
+Current implementation boundaries and remaining acceptance work:
+[integrated status and roadmap](docs/status-and-roadmap.md).
+
+Start model configuration with [local / OpenRouter profiles](docs/model-adapters.md):
+`myumiq models init` generates editable settings and `myumiq models check` tests the
+configured dialogue, planning and decision contracts without operating VR devices.
+
 **MyuMIQ-VRChat** is an experimental embodied AI agent for VRChat that combines **local LLM-driven intent**, **virtual embodiment**, **online learning**, **real-time perception**, and **low-latency voice conversation**.
 
 > **The LLM decides what it wants to do; learned motor policies learn how to do it in the world.**
 
-> 🚧 **Status:** design / early implementation. The architecture below describes the intended system, not a finished feature set.
+> 🚧 **Status:** the bounded LLM-to-avatar body slice has been observed in a private
+> VRChat Home. Repeated autonomous finite-intent selection, simple drives and
+> outcome memory are implemented. A low-rate open-vocabulary detector now feeds
+> temporal WorldState, and Silero onset, configurable Qwen3-ASR/faster-whisper, structured
+> conversation, cancellable local TTS and barge-in are connected off the motor
+> thread. The individual models and real VRChat capture are measured; the final
+> VRChat microphone round trip still requires separate in-app verification.
+> Confirmed device experience can refine a separate motor candidate through
+> PAMIQ; session-disjoint evaluation gates candidate eligibility. Live snapshot
+> adoption is a separate explicit step.
+
+The executable slice now connects a local LLM's validated intention to a canonical body, bounded procedural motor policy, independent output watchdog, and PAMIQ experience recording. It includes mock execution, official VMT v0.15 OSC hands/inputs/finger control, a separate VirtualHMD_OpenVR v0.1 head-pose adapter, and optional OpenVR device readback. The mock path and loopback failure cases are testable without VRChat. **Each deployment requires independent console-rendering, visible avatar-tracking and persistence checks; machine-specific evidence belongs in the parent local notes.** Custom OpenVR/display driver development is suspended. See [running the slice](docs/running.md), [VMT safety](docs/vmt-backend.md), [feasibility](docs/feasibility.md), and [architecture](docs/architecture.md).
+
+Implemented intentions depend on the selected motor adapter and configured
+capabilities. They include posture changes, WAVE, WALK_IN_PLACE, LOOK_AT,
+configured `MOTION_<NAME>` gestures, bounded EXPLORE_HOME locomotion, and short
+MOVE_FORWARD / TURN_LEFT / TURN_RIGHT attempts. The
+legacy motor also supports nearby calibrated REACH. The LLM never generates
+per-frame poses or buttons. OpenVR device feedback is not an observation of
+VRChat's avatar IK or root position; person approach and contact need further sensing.
+
+Full-body state, goals/constraints and eleven-point output are implemented, with
+CC0 glTF retargeting and a small periodic imitation policy. Use the
+[supervised body console](docs/body-console.md) for posture, calibration input,
+learned in-place motion, status and clean shutdown. FBT calibration and avatar
+motion must be verified for each deployment. Concurrent task execution,
+contact-aware whole-body RL remains future work. Autonomous whole-body skill
+selection is connected through [autonomous mode](docs/autonomous-mode.md);
+see also [the full-body contract](docs/full-body.md).
+
+An optional articulated actor now follows learned full-body motion sequences as
+well as configured static postures. The executive can acquire a configured CC0
+motion example, validate and register its prior, and restore it after restart.
+Periodic and finite references share feedback-paced execution and retain the
+observed stopping posture. Configured lessons can be discovered and learned
+without waiting for conversation. Per-lesson glTF/GLB sources and explicit
+cross-skeleton retarget profiles support additional gestures. This is bounded
+imitation acquisition; arbitrary motion invention and online task RL remain future
+work. [Configured replay refinement](docs/experience-learning.md) now updates a
+separate PAMIQ training model from confirmed device observations, evaluates it on
+independent sessions and records ready/rejected candidates. It can run automatically
+through the existing executive; it never synchronizes untested weights into live control.
+Optional bounded update backtracking retains the same validation gates and saves
+each rejected/accepted step for review before a later run adopts the candidate.
+Controller movement can run with the learned gait while retaining separate
+tracking-space and world-motion evidence. The Standard corpus has no waving clip;
+the [full-body guide](docs/full-body.md) describes an actual CC0 waving source.
+
+The articulated model supports [configurable local joint constraints](docs/joint-feasibility.md)
+shared by training, tracker fitting and execution. These bound relative joint
+rotations while allowing the whole body to turn or lie down. Existing unconstrained
+actors require a new evaluated candidate; this does not establish live avatar IK
+correctness or eliminate all self-intersection.
+
+The optional [goal executive](docs/goal-directed-mode.md) connects free LLM purposes,
+capability checks, sequential skill plans, observed outcomes and bounded imitation
+learning. Missing capabilities remain explicit learning tasks; unsupported contact
+and navigation are not treated as executable skills.
+
+An optional [Decision Layer](docs/decision-layer.md) independently scores action
+candidates using local Qwen/Nemotron multimodal rerankers or official TypeSafe Jev
+(direct API or OpenRouter; text state only). It connects to the autonomous worker
+through an isolated loopback service, preserves snapshot freshness and records
+scores/selection in decision logs and references in replay. Benchmark tools cover
+quality, candidate order, GPU memory and 2/4/8/16-candidate latency. Retrieval-model
+judgment quality and 100 ms live latency are not established capabilities.
+
+When both `purpose` and `decision` are configured, this separate model owns body
+choice from world/body state, conversation history, drives and observed outcomes.
+The chat model generates speech only; no body-command extraction runs on it.
+Body decisions continue during speech and motion. The current bounded action
+catalogue does not yet replace open-ended planning or supply whole-body RL.
+
+[Role-specific model adapters](docs/model-adapters.md) let dialogue, independent
+candidate selection and slow goal proposals use local chat or OpenRouter separately.
+Jev keeps its own Decisions API scorer contract. Provider/model routing is fixed per
+configuration with no automatic fallback. The optional `purpose.planner` proposes
+goals through local capability checks and shared memory while the body decision
+loop retains action ownership. Installed adapters can also replace generation,
+scoring, chunk ASR, VAD, speech output and image detection. Native realtime speech
+sessions remain a separate [design](docs/cognition-voice-adapters.md).
 
 ## What is MyuMIQ?
 
@@ -440,6 +535,34 @@ A separate profile or account can help isolate configuration, but it does not by
 
 Do not store VRChat, Steam, or other service credentials in this repository.
 
+## Full-body development
+
+Canonical eleven-point body state, goals/constraints and actuation are implemented,
+with optional eight-tracker VMT output/readback and owned-device shutdown. A CC0
+glTF import pipeline and phase-conditioned imitation model can be evaluated through
+the existing watchdog and PAMIQ replay. Real VRChat eleven-point calibration and
+full-body pose validation require per-deployment observation; offline motion
+fitting does not prove avatar tracking or physical stability.
+See [full-body documentation](docs/full-body.md).
+
 ## License
 
-A project license has not been selected yet.
+This repository is licensed under the [MIT License](LICENSE). Dependencies and official third-party driver distributions retain their own licenses.
+## Autonomous whole-body operation
+
+An optional [autonomous mode](docs/autonomous-mode.md) connects local cognition,
+drives/memory, low-rate vision, voice, full-body skills and PAMIQ recording through
+the existing body console. Optional service failures are explicit and recoverable;
+device safety failures retain the existing stop behavior. Deployment verification
+and online motor RL are reported separately.
+
+Purpose mode uses [shared memory and dialogue](docs/integrated-memory.md):
+continuing commitments, working conversation, evidence-bearing episodes,
+speaker-associated knowledge and conditional capability outcomes feed the same
+executive and reranker. Bounded head/hand overlays preserve disjoint body tasks.
+Real partner recognition, delivered speech and general navigation are separate
+validation requirements, not implied by this integration.
+
+Optional [EXPLORE_HOME](docs/exploration.md) connects short controller turns and
+advances to visual-change/novelty memory under a private-Home gate. This is bounded
+mapless exploration; metric localization and obstacle-aware approach remain unavailable.

@@ -2,7 +2,43 @@
 
 This repository is the application repository for **MyuMIQ-VRChat**.
 
-## Mission
+## Runtime redesign (2026-09-21)
+
+Read `docs/runtime-redesign.md` through `docs/architecture.md` before changing
+core boundaries. Preserve input utterances independently of reply cancellation;
+keep body-goal lifetime, observation freshness and output leases separate.
+Continue through the staged vertical slices and report implemented vs proposed
+contracts accurately. New reference clips do not establish actor learning or
+live capability. Reuse the current memory/executive, PAMIQ and output ownership
+rather than adding parallel schedulers. Model profiles remain replaceable and
+fixed per run; machine-specific measurements and credentials stay outside the repo.
+
+## Current direction: LLM-to-avatar vertical slice (2026-09-16)
+
+The user has resumed implementation and controlled live validation through a
+VRChat avatar. The earlier freeze below is historical and no longer blocks this
+work. Implement the smallest tested LLM intent -> body/motor -> official VMT
+hands + separate existing Virtual HMD -> SteamVR -> VRChat slice, with PAMIQ
+integration and replay. Keep intent generation outside the real-time motor loop.
+
+Do not resume custom OpenVR/display driver development or source builds of those
+drivers. Do not change Windows security protections. Preserve unrelated Python,
+VM and GPU workloads. Keep device installation, display/session diagnostics,
+model downloads, machine configuration and measured results in the parent local
+directory. Read that memo for the current live gate before launching VR. RDP
+observations do not establish console rendering; keep a recovery route before
+any session switch. Use the dedicated VRChat profile and private test environment.
+Never describe accepted targets as observed avatar motion. Public social actions
+and messaging require separate explicit authorization.
+
+## Historical direction
+
+The earlier offline-only freeze and custom-driver feasibility instructions are
+historical. Current implementation uses the application adapters and live gates
+in docs/running.md. Do not resume the native driver, load old retained actions,
+or claim console/VRChat validation from mock or RDP measurements.
+
+## Project mission
 
 Build a local embodied AI agent for VRChat that combines:
 
@@ -46,7 +82,7 @@ Before large implementation work:
 
 Do not stop after producing a plan when implementation is possible.
 
-## First technical feasibility milestone
+## Historical first feasibility milestone (custom-driver steps suspended)
 
 Before implementing sophisticated RL, imitation learning, voice, or perception, validate the preferred embodiment path:
 
@@ -405,6 +441,11 @@ Test coordinate conversion and schema validation early.
 For RL logic, prefer small deterministic environment tests before long training runs.
 
 ## Logging and observability
+
+Keep machine-specific installation paths, environment inventories, local test results,
+logs, and benchmark measurements outside this repository. Store local notes and
+measurement artifacts in the repository's parent directory. Keep reusable design,
+implementation contracts, and validation procedures in the repository docs.
 
 It should be possible to reconstruct why an action happened. Preserve enough structured telemetry to connect:
 

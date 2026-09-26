@@ -1,5 +1,14 @@
 # Virtual VR environment
 
+Current direction: use an RDP-independent Windows console display before resuming
+live rendering validation. The application layer is implemented as described in
+[running the slice](running.md). Use official VMT hands plus a separate existing
+Virtual HMD for head/rendering. Do not execute the historical custom-driver build
+and registration procedures below. Preserve Windows protection settings, unrelated
+GPU/VM workloads and a recovery route before switching sessions. Machine setup,
+backups, distribution hashes and gate results belong in the repository's parent.
+RDP-only timing/render observations must be re-evaluated on the console display.
+
 This document records the current development direction for running MyuMIQ as a VRChat player with an AI-controlled virtual body while keeping the normal VRChat / SteamVR environment easy to restore.
 
 > Status: design and feasibility guidance. Do not treat the Virtual HMD/controller path as validated until it has been tested on the target machine.
@@ -76,6 +85,17 @@ MyuMIQ VRChat:  --profile=1
 ```
 
 The exact launch command should be confirmed against the installed Steam/VRChat environment before automating it.
+
+Profile 1 is a convention, not a required MyuMIQ identity. A launcher must make
+the VRChat profile explicit and record the selected number. Compare a failed
+test launch with the user's successful normal launch before concluding that
+manual authentication is required: forcing a different profile changes the
+client's login state. Do not copy credentials between profiles or silently switch
+to another account. When the user chooses their usual profile, verify the actual
+authenticated account and permitted Home before enabling voice/body control.
+Driver/settings restoration does not imply isolation of VRChat's own profile.
+Prefer a bounded normal client exit before falling back to forced termination;
+record the exit mode separately from restoration results.
 
 ### Windows user separation
 

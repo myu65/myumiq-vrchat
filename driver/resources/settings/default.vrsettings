@@ -1,0 +1,7 @@
+{
+  "driver_myumiq": {
+    "enable": true,
+    "render_size": 512,
+    "refresh_hz": 60.0
+  }
+}

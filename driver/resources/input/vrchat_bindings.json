@@ -1,0 +1,249 @@
+{
+  "app_key": "steam.app.438100",
+  "controller_type": "myumiq_controller",
+  "name": "MyuMIQ minimal head and hands",
+  "description": "Pose, trigger and grip for the MyuMIQ feasibility driver",
+  "bindings": {
+    "/actions/global": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/global/in/interact"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/global/in/grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "pull": {
+              "output": "/actions/global/in/trigger_axis"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/global/in/interact"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/global/in/grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "pull": {
+              "output": "/actions/global/in/trigger_axis"
+            }
+          }
+        }
+      ],
+      "poses": [
+        {
+          "output": "/actions/global/in/pose",
+          "path": "/user/hand/left/pose/raw"
+        },
+        {
+          "output": "/actions/global/in/pose",
+          "path": "/user/hand/right/pose/raw"
+        }
+      ]
+    },
+    "/actions/one_hand": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/one_hand/in/interact"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/one_hand/in/grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "pull": {
+              "output": "/actions/one_hand/in/trigger_axis"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/one_hand/in/interact"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/one_hand/in/grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "pull": {
+              "output": "/actions/one_hand/in/trigger_axis"
+            }
+          }
+        }
+      ],
+      "poses": []
+    },
+    "/actions/menu": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/menu/in/confirm"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/menu/in/drag"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/menu/in/confirm"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/menu/in/drag"
+            }
+          }
+        }
+      ],
+      "poses": []
+    },
+    "/actions/action_menu": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/action_menu/in/select"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/action_menu/in/grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "parameters": {
+            "click_activate_threshold": "0.7",
+            "click_deactivate_threshold": "0.55"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/action_menu/in/select"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/action_menu/in/grab"
+            }
+          }
+        }
+      ],
+      "poses": []
+    }
+  }
+}

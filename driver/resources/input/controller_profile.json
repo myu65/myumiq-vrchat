@@ -1,0 +1,12 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "myumiq_controller",
+  "input_bindingui_mode": "controller_handed",
+  "input_source": {
+    "/input/trigger": {"type": "trigger", "order": 1},
+    "/input/grip": {"type": "button", "order": 2}
+  },
+  "default_bindings": [
+    {"app_key": "steam.app.438100", "binding_url": "vrchat_bindings.json"}
+  ]
+}
