@@ -888,12 +888,60 @@ def test_requested_posture_survives_outcome_and_chat_until_new_body_request(runt
     assert runner.body_decision.maintained_posture is None
 
 
-@pytest.mark.parametrize("held_skill", ["CROUCH", "POSTURE_PRONE"])
+def test_operator_condition_goal_preserves_dialogue_and_supersedes_old_request(
+    runtime, monkeypatch
+):
+    from myumiq_vrchat.body import BodyCondition, BodyGoal
+
+    owner, runner, _ = runtime
+    heard = runner.shared.hear("立って")
+    goal = BodyGoal(
+        conditions=(BodyCondition(part="head", position=(None, None, 1.3)),), duration_s=5.0
+    )
+    runner.utterances.append("unfinished conversation")
+    dialogue_epoch = runner.dialogue_epoch
+
+    def unexpected_cancel():
+        raise AssertionError("body goal must not cancel the dialogue")
+
+    monkeypatch.setattr(runner, "_preempt_dialogue", unexpected_cancel)
+    monkeypatch.setattr(runner, "_dialogue_tick", lambda now: None)
+    monkeypatch.setattr(runner.body_decision, "tick", lambda now: None)
+    owner._choose(1.0, Intent(skill="BODY_GOAL", body_goal=goal), "operator_body_goal")
+    runner.tick(1.0)
+    assert runner.epoch == owner.generation
+    assert runner.utterances == ["unfinished conversation"]
+    assert runner.dialogue_epoch == dialogue_epoch
+    decision = runner.body_decision
+    assert decision.handled_request == heard["episode_id"]
+    report = {"basis": "latest_utterance", "request_status": "action"}
+    assert decision._request_conflict(Intent(skill="STAND"), report, heard["episode_id"]) == (
+        True,
+        False,
+    )
+    following = runner.shared.hear("今度は立って")
+    assert decision._request_conflict(Intent(skill="STAND"), report, following["episode_id"]) == (
+        False,
+        True,
+    )
+
+
+@pytest.mark.parametrize("held_skill", ["CROUCH", "POSTURE_PRONE", "BODY_GOAL"])
 @pytest.mark.parametrize("status", ["none", "unsupported", "clarify"])
 def test_conversation_classification_cannot_unlock_posture(runtime, held_skill, status):
     owner, runner, _ = runtime
     decision = runner.body_decision
-    decision.maintained_posture = {"skill": held_skill, "utterance_id": "posture-request"}
+    if held_skill == "BODY_GOAL":
+        from myumiq_vrchat.body import BodyCondition, BodyGoal
+
+        goal = BodyGoal(
+            conditions=(BodyCondition(part="head", position=(None, None, 1.3)),),
+            duration_s=5.0,
+        )
+        owner.choice = (2, 1.0, Intent(skill="BODY_GOAL", body_goal=goal), "operator_body_goal")
+        assert decision.maintained_posture is None
+    else:
+        decision.maintained_posture = {"skill": held_skill, "utterance_id": "posture-request"}
     decision.handled_request = "posture-request"
     # Even an inconsistent latest_utterance basis is not a new body command.
     report = {"basis": "latest_utterance", "request_status": status}

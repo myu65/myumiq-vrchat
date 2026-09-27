@@ -6,6 +6,9 @@
 [多周期構成への移行](docs/architecture.md#multi-rate-migration-2026-09-26)を参照。
 actorの400ms先読み・MotionBuffer・検出から独立した高速視覚追跡も実装しました。
 [実行境界と受入条件](docs/architecture.md#buffered-execution-and-visual-continuity-2026-09-27)を参照。
+動作名によらず頭の高さ・手の位置などを組み合わせる
+[条件付き身体目標](docs/body-conditions.md)を追加しました。現在は明示的な条件入力が入口で、
+会話からの条件生成と条件を使う追加学習は次の段階です。
 視界を使う会話と行動判断、要求の採否、停止の保持は
 [視界・会話・行動の接続](docs/visual-conversation-actions.md)を参照。
 

@@ -294,6 +294,25 @@ class PurposeRunner:
         # Obsolete speech cannot hold up a new body or conversation request.
         self.epoch = self.owner.generation
 
+    def adopt_operator_body_goal(self):
+        """A new body goal preempts body work, without cancelling conversation."""
+        self.goal_context_revision += 1
+        self.finish("interrupted", "operator_body_goal")
+        self.owner.attention = self.owner.gesture = None
+        if self.body_decision:
+            self.body_decision.clear_body_request()
+            self.body_decision.conversation_changed()
+            # An older utterance cannot supersede the newly submitted goal.
+            self.body_decision.handled_request = next(
+                (
+                    t["episode_id"]
+                    for t in reversed(self.shared.working["turns"])
+                    if t["role"] == "user"
+                ),
+                None,
+            )
+        self.epoch = self.owner.generation
+
     def accept(self, goal, now, origin="local_llm", *, retry_utterance_id=None):
         self.origin = origin
         self.goal, self.goal_id = goal, uuid.uuid4().hex
@@ -685,7 +704,10 @@ class PurposeRunner:
         if owner.learned_motor:
             owner.learned_motor.configure_registry(self.registry)
         if owner.generation != self.epoch:
-            self.interrupt("manual_or_voice_preemption")
+            if owner.choice[3] == "operator_body_goal":
+                self.adopt_operator_body_goal()
+            else:
+                self.interrupt("manual_or_voice_preemption")
         self.exploration.tick(now)
         talk = self.registry.get("TALK")
         talk.available = self.services.voice is not None

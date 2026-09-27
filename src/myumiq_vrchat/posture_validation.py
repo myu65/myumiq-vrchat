@@ -13,7 +13,7 @@ from .tracker_policy import pose_error
 from .whole_body import vector
 
 
-def transition(actor, start, goal, *, duration_s=12.0, dt=0.05, floor=0.0):
+def transition(actor, start, goal, *, duration_s=12.0, dt=0.05, floor=0.0, criterion=None):
     """Ideal-actuator admission diagnostic, not avatar/contact/task observation.
 
     Check every tracker against the plane, not only the feet: head and hands can
@@ -42,6 +42,8 @@ def transition(actor, start, goal, *, duration_s=12.0, dt=0.05, floor=0.0):
             np.linalg.norm(error[:, :3], axis=1).max() <= 0.12
             and np.linalg.norm(error[:, 3:], axis=1).max() <= 0.35
         )
+        if criterion is not None:
+            within = within and criterion(current)["success"]
         stable = stable + 1 if within else 0
         if stable >= max(3, int(np.ceil(0.15 / dt)) + 1):
             settled_at = index * dt

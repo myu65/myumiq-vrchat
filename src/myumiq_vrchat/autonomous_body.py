@@ -33,6 +33,7 @@ class Intent(Frozen):
     skill: (
         Literal[
             "WAIT",
+            "BODY_GOAL",
             "WAVE",
             "LOOK_AT",
             "REACH",
@@ -53,9 +54,16 @@ class Intent(Frozen):
     hand: Literal["left", "right"] | None = None
     target: str | None = Field(default=None, max_length=80)
     speech: str = Field(default="", max_length=120, pattern=r"^(.*[ぁ-ゖァ-ヺ].*|)$")
+    body_goal: BodyGoal | None = None
 
     @model_validator(mode="after")
     def arguments(self):
+        if (self.skill == "BODY_GOAL") != (self.body_goal is not None):
+            raise ValueError("BODY_GOAL requires a condition goal only")
+        if self.body_goal is not None and (
+            not self.body_goal.conditions or self.body_goal.duration_s != self.duration_s
+        ):
+            raise ValueError("BODY_GOAL requires matching duration and explicit conditions")
         if (self.hand is not None) != (self.skill in ("WAVE", "REACH")):
             raise ValueError("hand required only for hand skills")
         if (self.target is not None) != (self.skill in ("LOOK_AT", "REACH")):
@@ -612,7 +620,7 @@ class AutonomousBody:
             )
             return state_target(body)
         if self.learned_motor:
-            self.goal = BodyGoal(
+            self.goal = intent.body_goal or BodyGoal(
                 tasks=(
                     BodyTask(
                         id=intent.skill,

@@ -229,6 +229,8 @@ class EmbodiedDecision:
             and utterance_id != self.handled_request
         )
         held = self.maintained_posture
+        if self.runner.owner.choice[2].skill == "BODY_GOAL":
+            held = {"skill": "BODY_GOAL"}
         compatible = not held or intent.skill in ("WAIT", "LOOK_AT", held["skill"])
         return not compatible and not new_request, new_request
 

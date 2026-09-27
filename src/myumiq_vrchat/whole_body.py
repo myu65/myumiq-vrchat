@@ -139,6 +139,7 @@ class WholeBodyPolicy:
     def step(self, body: BodyState, goal: BodyGoal, dt: float) -> BodyTarget:
         if (
             len(goal.tasks) != 1
+            or goal.conditions
             or goal.constraints
             or set(goal.tasks[0].effectors) != set(PARTS)
             or goal.tasks[0].kind != "locomotion"

@@ -3,7 +3,7 @@
 import math
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 Number = Annotated[float, Field(allow_inf_nan=False)]
 Unit = Annotated[Number, Field(ge=0, le=1)]
@@ -157,13 +157,62 @@ class BodyConstraint(Frozen):
         return self
 
 
+class BodyCondition(Frozen):
+    """End-state requirements; missing components are free, never zero targets.
+
+    All offsets use tracking axes. ``current`` binds to the observed part at
+    acceptance; ``target`` adds a calibrated object's metric position. A supplied
+    target-frame orientation is absolute, because WorldObject has no orientation.
+    """
+
+    part: BodyPart
+    frame: Literal["tracking", "current", "target"] = "tracking"
+    target: str | None = Field(default=None, min_length=1, max_length=80)
+    position: tuple[Number | None, Number | None, Number | None] | None = None
+    orientation: Quat | None = None
+    position_tolerance: Number = Field(default=0.03, ge=0.005, le=0.12)
+    angular_tolerance: Number = Field(default=0.15, ge=0.02, le=0.35)
+
+    @model_validator(mode="after")
+    def arguments(self):
+        if (self.target is not None) != (self.frame == "target"):
+            raise ValueError("target frame requires exactly one target identity")
+        if self.position is not None and (
+            all(v is None for v in self.position)
+            or any(v is not None and abs(v) > 3 for v in self.position)
+        ):
+            raise ValueError("condition positions require bounded selected coordinates")
+        if self.position is None and self.orientation is None:
+            raise ValueError("empty body condition")
+        if self.frame == "target" and self.position is None:
+            raise ValueError("metric target binding requires a position condition")
+        if self.orientation is not None:
+            Pose(position=(0.0, 0.0, 0.0), orientation=self.orientation)
+        return self
+
+
 class BodyGoal(Frozen):
-    tasks: tuple[BodyTask, ...] = Field(min_length=1, max_length=11)
+    tasks: tuple[BodyTask, ...] = Field(default=(), max_length=11)
     constraints: tuple[BodyConstraint, ...] = Field(default=(), max_length=22)
+    conditions: tuple[BodyCondition, ...] = Field(default=(), max_length=11)
     duration_s: Number = Field(gt=0, le=60)
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        result = handler(self)
+        if not self.conditions:
+            result.pop("conditions", None)  # Preserve existing replay identities.
+        return result
 
     @model_validator(mode="after")
     def ownership(self) -> Self:
+        if self.conditions:
+            if self.tasks or self.constraints:
+                raise ValueError("conditions and legacy task ownership cannot be mixed")
+            if len({c.part for c in self.conditions}) != len(self.conditions):
+                raise ValueError("combine conditions for a body part into one entry")
+        elif not self.tasks:
+            raise ValueError("body goal requires tasks or conditions")
         ids, owned = set(), set()
         for task in self.tasks:
             if task.id in ids or len(set(task.effectors)) != len(task.effectors):

@@ -2,9 +2,9 @@
 
 This is an implementation map, not a claim that all end-to-end goals are complete.
 The [2026-09-21 runtime redesign](runtime-redesign.md) defines the target boundaries
-and migration gates. Input continuity is the first implemented slice; persistent
-compound body goals, playback evidence and experience-driven actor promotion are
-still migration work.
+and migration gates. Input continuity, held posture goals and masked static body
+conditions are implemented. General compound trajectories and experience-driven
+actor promotion remain migration work.
 Machine-specific measurements, logs, model paths and live-session handoff are kept
 in the parent workspace's `NEXT_SESSION.md` and `MYUMIQ_RUNBOOK.md`.
 
@@ -17,6 +17,11 @@ floor/actuator bounds. Research and the remaining learning gap are documented in
 
 ## Implemented boundaries
 
+- Optional [body conditions](body-conditions.md) accept partial positions and
+  orientations, complete one bounded whole-body goal off the motor thread and
+  execute it through the existing actor. Completion and observed execution have
+  separate evidence. The operator entry is implemented; language proposals,
+  condition curricula and contact/moving-target conditions remain future work.
 - Named posture goals/references share the existing whole-body actor. Ordinary
   conversation cannot release a held posture. Newly fitted posture references stay
   pending actor validation; all-tracker floor checks cover proposed and interpolated

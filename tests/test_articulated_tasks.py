@@ -25,6 +25,57 @@ from myumiq_vrchat.purposes import Purpose, SkillRequest
 from myumiq_vrchat.whole_body import target_from_vector, vector
 
 
+def test_condition_goal_prepares_asynchronously_and_uses_existing_actor(timed_motor):
+    from myumiq_vrchat.body import BodyCondition, BodyGoal
+
+    motor, states, jobs = timed_motor
+    motor.settings = motor.settings.model_copy(update={"condition_goals": True})
+    pose = motor.controller.rig.forward(states[0])
+    goal = BodyGoal(
+        conditions=(BodyCondition(part="head", frame="current", position=(0.0, 0.0, 0.0)),),
+        duration_s=5.0,
+    )
+    choice = (91, 10.0, Intent(skill="BODY_GOAL", body_goal=goal, duration_s=5.0), "test")
+    assert motor.step(simulated_body(pose, 10.0), choice, 10.0, 0.02) == pose
+    jobs[0][0].set_result((states[0], {}))
+    assert motor.step(simulated_body(pose, 10.1), choice, 10.1, 0.02) == pose
+    assert len(jobs) == 2 and motor.controller.steps_executed == 0
+    assert motor.timing(choice, 10.1)["phase"] == "preparing"
+    jobs[1][0].set_result(jobs[1][1]())
+    motor.step(simulated_body(pose, 10.2), choice, 10.2, 0.02)
+    for now in (10.25, 10.35, 10.45):
+        assert motor.step(simulated_body(pose, now), choice, now, 0.02) == pose
+    assert motor.timing(choice, 10.45)["phase"] == "completed"
+    assert motor.goal_evidence(simulated_body(pose, 10.45), 10.45, 91)["condition_evidence"][
+        "success"
+    ]
+    assert motor.status()["goal_evidence"]["condition_evidence"]["success"]
+    assert motor.status()["goal_evidence"]["scope"] == "simulated_tracker_goal"
+
+
+def test_replaced_condition_preparation_cannot_apply_its_old_goal(timed_motor):
+    from myumiq_vrchat.body import BodyCondition, BodyGoal
+
+    motor, states, jobs = timed_motor
+    pose = motor.controller.rig.forward(states[0])
+    goal = BodyGoal(
+        conditions=(BodyCondition(part="head", frame="current", position=(0.2, None, None)),),
+        duration_s=5.0,
+    )
+    choice = (91, 10.0, Intent(skill="BODY_GOAL", body_goal=goal, duration_s=5.0), "test")
+    assert not motor.supports(choice[2])
+    motor.settings = motor.settings.model_copy(update={"condition_goals": True})
+    motor.step(simulated_body(pose, 10.0), choice, 10.0, 0.02)
+    jobs[0][0].set_result((states[0], {}))
+    motor.step(simulated_body(pose, 10.1), choice, 10.1, 0.02)
+    replacement = (92, 10.2, Intent(skill="STAND"), "test")
+    assert motor.step(simulated_body(pose, 10.2), replacement, 10.2, 0.02) == pose
+    assert motor.conditions.pending[1].is_set() and len(jobs) == 2
+    jobs[1][0].set_result((motor.controller.rig.forward(states[1]), {"old": True}))
+    motor.step(simulated_body(pose, 10.3), replacement, 10.3, 0.02)
+    assert motor.conditions.report is None and motor.pose_goal == pose
+
+
 def test_custom_posture_uses_existing_actor_catalogue_and_candidates(timed_motor):
     from myumiq_vrchat.body import WorldState
     from myumiq_vrchat.capabilities import CapabilityRegistry

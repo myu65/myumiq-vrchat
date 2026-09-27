@@ -39,6 +39,17 @@ def test_evaluation_rejects_low_hands_even_with_feet_above_floor(tmp_path, monke
     assert not result["accepted"] and result["floor_failure"]
 
 
+def test_dense_endpoint_tolerance_cannot_override_unmet_conditions(tmp_path, monkeypatch):
+    motor, states, _ = controller(monkeypatch, tmp_path)
+    start = motor.rig.forward(states[0])
+    monkeypatch.setattr("myumiq_vrchat.posture_validation.fit_body", lambda *a: (states[0], {}))
+    result = transition(
+        motor.actor, start, start, duration_s=1, criterion=lambda pose: {"success": False}
+    )
+    assert result["maximum_position_error_m"] == 0.0
+    assert not result["accepted"] and not result["floor_failure"]
+
+
 @pytest.mark.parametrize("case", ["hold", "unreached", "wrong_rig", "wrong_floor"])
 def test_cli_binds_configuration_and_reports_failed_admission(tmp_path, monkeypatch, case):
     motor, states, _ = controller(monkeypatch, tmp_path)

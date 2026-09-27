@@ -1,5 +1,30 @@
 # Architecture
 
+## General body conditions (2026-09-27, current slice)
+
+Move the body-goal boundary from a list of posture names to conditions on an end
+state. Extend the existing BodyGoal with masked position/orientation conditions;
+resolve all conditions together against the calibrated joint model. Unspecified
+coordinates remain free, with the current whole-body pose as the regularizer.
+This slow goal completion is not an actuator or a new per-limb overlay. The same
+learned actor, MotionBuffer and output owner execute the completed whole-body goal.
+No new action-specific solver or trainer is added for each height or hand target.
+
+The first executable slice covers static conditions, current-pose-relative offsets
+and fresh calibrated metric target positions. Vision-only boxes cannot bind metric
+conditions. Moving targets invalidate a compiled goal; continuous target tracking,
+motion/contact conditions and language-to-condition generation remain later work.
+Old named goals stay compatible. The new runtime entry is opt-in and must preserve
+bounded preparation, cancellation, goal evidence and floor/joint limits.
+
+Use the existing PAMIQ candidate learning path for failed condition goals. Compare
+unseen heights, target locations and combinations, not just the named training
+poses. A feasible completed skeleton does not establish actor generalization;
+report goal completion and actor execution independently. This slice introduces
+neither a new scheduler nor automatic admission of unvalidated actor weights.
+See [body conditions](body-conditions.md) for the implemented input, frame,
+preparation and evaluation contracts and the remaining learning stages.
+
 ## Posture and interaction learning slice (2026-09-27)
 
 This slice keeps speech and a requested whole-body posture independent.

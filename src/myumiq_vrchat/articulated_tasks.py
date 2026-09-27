@@ -26,15 +26,18 @@ class ArticulatedTasks(Frozen):
     actor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     rig_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     reference_floor: Number
-    goals: dict[str, BodyTarget] = Field(min_length=1, max_length=32)
+    goals: dict[str, BodyTarget] = Field(default_factory=dict, max_length=32)
     descriptions: dict[str, str] = Field(default_factory=dict, max_length=32)
     motions: dict[str, MotionReference] = Field(default_factory=dict, max_length=32)
     facing: bool = False
+    condition_goals: bool = False
     motion_anchor: Literal["session", "current"] = "session"
     execution_mode: Literal["buffered", "feedback"] = "buffered"
 
     @model_validator(mode="after")
     def validate_goals(self):
+        if not (self.goals or self.motions or self.facing or self.condition_goals):
+            raise ValueError("configure at least one articulated goal adapter")
         if len(self.goals) + len(self.motions) > 32:
             raise ValueError("at most 32 configured posture and motion entries combined")
         if not all(posture_capability(name) for name in self.goals):
@@ -147,6 +150,9 @@ class ArticulatedIntentMotor:
         self.facing = None
         self.world = WorldState()
         self.settling = None
+        from .body_conditions import ConditionPreparation
+
+        self.conditions = ConditionPreparation()
         try:
             for name, reference in self.settings.motions.items():
                 self.install_motion(name, reference.load(self.settings.reference_floor), reference)
@@ -169,6 +175,8 @@ class ArticulatedIntentMotor:
         self.motions[name] = (model, reference)
 
     def supports(self, intent):
+        if intent.skill == "BODY_GOAL":
+            return self.settings.condition_goals and intent.body_goal is not None
         if intent.skill == "LOOK_AT":
             return self.settings.facing
         if intent.skill in self.settings.goals:
@@ -184,6 +192,10 @@ class ArticulatedIntentMotor:
         }
         if self.settings.execution_mode == "buffered":
             fitting["feedback_contract"] = "observed_buffered_trajectory_v1"
+        if intent.body_goal is not None:
+            fitting["condition_goal_sha256"] = hashlib.sha256(
+                intent.body_goal.model_dump_json().encode()
+            ).hexdigest()
         if self.controller.rig.joint_limits:
             fitting.update(
                 fitting_contract="joint_envelope_tracker_objective_v3",
@@ -268,6 +280,7 @@ class ArticulatedIntentMotor:
 
     def hold(self):
         self.learning_metadata = None
+        self.conditions.reset()
         if self.active:
             self.controller.end_goal()
             if self.execution is not None:
@@ -293,7 +306,9 @@ class ArticulatedIntentMotor:
             self.execution = replace(self.execution, error=self.error)
         elif self.pose_goal is None and self.error is None:
             try:
-                if intent.skill == "LOOK_AT":
+                if intent.skill == "BODY_GOAL":
+                    self.pose_goal = current  # Hold while the slow goal completion runs.
+                elif intent.skill == "LOOK_AT":
                     self.facing = BodyFacing(current, intent.target)
                     self.pose_goal = current
                 elif intent.skill in self.motions:
@@ -318,6 +333,8 @@ class ArticulatedIntentMotor:
         if timing["phase"] in ("failed", "cancelled", "expired", "completed"):
             return self._finish(current, timing["error"])
         self.active = True
+        if self.conditions.retiring():
+            return current
         if self.facing:
             available = self.facing.observe(current, self.world, now)
             if self.facing.error:
@@ -332,6 +349,17 @@ class ArticulatedIntentMotor:
         starting = self.execution.started_at is None
         if starting and not self.controller.ready:
             return self.controller.hold_target or current
+        if intent.skill == "BODY_GOAL":
+            try:
+                completed = self.conditions.poll(
+                    self.controller, current, intent.body_goal, self.world, now
+                )
+                if completed is None:
+                    return current
+                self.pose_goal = completed
+            except (ValueError, RuntimeError) as exc:
+                self.conditions.reset()
+                return self._finish(current, str(exc))
         finite_complete = (
             self.playback is not None
             and self.playback.completed
@@ -340,7 +368,12 @@ class ArticulatedIntentMotor:
         if (
             not starting
             and self.controller.ready
-            and (intent.skill in self.settings.goals or finite_complete or self.facing)
+            and (
+                intent.skill in self.settings.goals
+                or intent.skill == "BODY_GOAL"
+                or finite_complete
+                or self.facing
+            )
         ):
             evidence = self.goal_evidence(body, now, key)
             if evidence["success"] is True:
@@ -418,11 +451,14 @@ class ArticulatedIntentMotor:
                 "execution": self.execution.snapshot(now),
                 "motion_reference": self.playback.evidence() if self.playback else None,
                 "facing_reference": self.facing.evidence(self.world, now) if self.facing else None,
+                "condition_goal": self.conditions.report,
                 **self.controller.last_metadata,
             }
         return action
 
     def _finish(self, current, error):
+        if error or self.conditions.pending:
+            self.conditions.reset()
         if error:
             self.error = error
             self.execution = replace(self.execution, error=error)
@@ -441,8 +477,11 @@ class ArticulatedIntentMotor:
                 set(self.settings.goals)
                 | set(self.motions)
                 | ({"LOOK_AT"} if self.settings.facing else set())
+                | ({"BODY_GOAL"} if self.settings.condition_goals else set())
             ),
             "motion_reference": self.playback.evidence() if self.playback else None,
+            "condition_goal": self.conditions.report,
+            "goal_evidence": self.completed_evidence,
             **self.controller.status(),
         }
 
@@ -493,10 +532,21 @@ class ArticulatedIntentMotor:
             "motion_reference": motion,
         }
         facing = getattr(self, "facing", None)
+        conditions = getattr(self, "conditions", None)
+        if conditions and conditions.resolved:
+            measured = conditions.resolved.measure(state_target(body))
+            try:
+                conditions.resolved.validate_targets(self.world, now)
+            except ValueError:
+                measured["success"] = False
+            result.update(
+                condition_evidence=measured, success=result["success"] and measured["success"]
+            )
         if facing:
             visual = facing.evidence(self.world, now)
             result.update(visual, success=visual["success"] if result["success"] else False)
         return result
 
     def close(self):
+        self.conditions.reset()
         self.controller.close()

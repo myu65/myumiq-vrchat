@@ -55,7 +55,9 @@ class Command(Frozen):
         "explore",
         "tracker_rates",
         "learned_pose",
+        "body_goal",
     ]
+    body_goal: BodyGoal | None = None
     pose_goal: BodyTarget | None = None
     goal_duration_s: Number | None = Field(default=None, ge=1, le=20)
     rates: tuple[SignedUnit, ...] | None = Field(default=None, min_length=66, max_length=66)
@@ -70,6 +72,14 @@ class Command(Frozen):
 
     @model_validator(mode="after")
     def arguments(self):
+        if (self.kind == "body_goal") != (self.body_goal is not None):
+            raise ValueError("body_goal requires conditions only")
+        if self.body_goal is not None and (
+            not self.body_goal.conditions or not 1 <= self.body_goal.duration_s <= 20
+        ):
+            raise ValueError(
+                "body_goal requires explicit conditions and a duration of 1 to 20 seconds"
+            )
         if (self.kind == "learned_pose") != (self.pose_goal is not None) or (
             self.kind == "learned_pose"
         ) != (self.goal_duration_s is not None):
@@ -120,6 +130,22 @@ def atomic_json(path: Path, value):
                 time.sleep(0.002)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def submit_body_goal(owner, goal, now):
+    """Operator goal entry; admission is separate from achieved motion."""
+    if not (
+        owner
+        and owner.enabled
+        and owner.learned_motor
+        and owner.learned_motor.settings.condition_goals
+    ):
+        return {"accepted": False, "reason": "active condition-enabled articulated motor required"}
+    from .autonomous_body import Intent
+
+    intent = Intent(skill="BODY_GOAL", body_goal=goal, duration_s=goal.duration_s)
+    owner._choose(now, intent, "operator_body_goal")
+    return {"accepted": True, "source": "operator_condition_goal", "completed": False}
 
 
 def pulse_controls(kind: str) -> Controls:
@@ -282,6 +308,10 @@ def run(args):
                     command_inbox.stop_requested.set()
                     command_inbox.write(root / "receipts" / path.name, {"accepted": True})
                     break
+                if command.kind == "body_goal":
+                    receipt = submit_body_goal(autonomous, command.body_goal, now)
+                    command_inbox.write(root / "receipts" / path.name, receipt)
+                    continue
                 if command.kind in ("utterance", "associate_speaker", "explore"):
                     if not autonomous or not autonomous.config.purpose or not autonomous.enabled:
                         command_inbox.write(
