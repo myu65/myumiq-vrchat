@@ -120,6 +120,20 @@ class Command(Frozen):
         return self.session == session and 0 <= now - self.issued <= 2
 
 
+def _observe_actor_feedback(articulated, autonomous, owner, body, now, learned_goal, pulse):
+    if autonomous and autonomous.learned_motor and autonomous.learned_motor.settings.servo_horizon:
+        controller = autonomous.learned_motor.controller
+        # Calibration shares the actor but publishes ordinary pose frames. Match
+        # the feedback reference to the path that owns the current output.
+        controller.servo_feedback = bool(autonomous.enabled and not learned_goal and not pulse)
+        for emission in owner.emissions():
+            controller.record_emission(emission)
+    if articulated is not None and (
+        articulated.feedback_pending or learned_goal and now < learned_goal[1]
+    ):
+        articulated.observe(body, now)
+
+
 def atomic_json(path: Path, value):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     temporary.write_text(json.dumps(value), encoding="utf-8")
@@ -452,10 +466,7 @@ def run(args):
                     pulse, pulse_until = command, now + command.duration_s
                 command_inbox.write(root / "last-command.json", command.model_dump(mode="json"))
                 command_inbox.write(root / "receipts" / path.name, {"accepted": True})
-            if articulated is not None and (
-                articulated.feedback_pending or learned_goal and now < learned_goal[1]
-            ):
-                articulated.observe(body, now)
+            _observe_actor_feedback(articulated, autonomous, owner, body, now, learned_goal, pulse)
             if rate_pending is not None:
                 old_observation, old_action, old_goal, metadata = rate_pending
                 learning, reward = None, None
@@ -561,13 +572,6 @@ def run(args):
             if command_inbox.stop_requested.is_set():
                 break
             diagnostics.enter("motor")
-            if (
-                autonomous
-                and autonomous.learned_motor
-                and autonomous.learned_motor.settings.servo_horizon
-            ):
-                for emission in owner.emissions():
-                    autonomous.learned_motor.controller.record_emission(emission)
             rate_metadata = None
             if learned_goal and now < learned_goal[1]:
                 from .tracker_action import CONTRACT

@@ -5,6 +5,44 @@ import pytest
 from myumiq_vrchat.body_console import Command, atomic_json, pulse_controls
 
 
+@pytest.mark.parametrize(
+    "enabled,learned_goal,pulse,expected_servo",
+    [
+        (False, (object(), 12.0), None, False),
+        (True, None, None, True),
+        (True, (object(), 12.0), None, False),
+        (True, None, object(), False),
+        (False, None, None, False),
+    ],
+)
+def test_shared_actor_feedback_matches_output_path_before_observation(
+    enabled, learned_goal, pulse, expected_servo
+):
+    from types import SimpleNamespace
+
+    from myumiq_vrchat.body_console import _observe_actor_feedback
+
+    events = []
+    actor = SimpleNamespace(
+        servo_feedback=not expected_servo,
+        feedback_pending=True,
+        record_emission=lambda emission: events.append(("emission", emission)),
+        observe=lambda body, now: events.append(("observe", actor.servo_feedback, body, now)),
+    )
+    autonomous = SimpleNamespace(
+        enabled=enabled,
+        learned_motor=SimpleNamespace(
+            controller=actor, settings=SimpleNamespace(servo_horizon=True)
+        ),
+    )
+    owner = SimpleNamespace(emissions=lambda: ["latest submitted pose"])
+    _observe_actor_feedback(actor, autonomous, owner, "readback", 10.0, learned_goal, pulse)
+    assert events == [
+        ("emission", "latest submitted pose"),
+        ("observe", expected_servo, "readback", 10.0),
+    ]
+
+
 @pytest.fixture
 def synchronous_commands(monkeypatch):
     """Control-command delivery is deterministic in virtual-clock motor tests."""
