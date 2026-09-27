@@ -138,6 +138,13 @@ class LocalAudioChatASR:
             elif self.config.qwen3_language is None:
                 raise ValueError("Qwen3-ASR response is missing its transcript boundary")
         text = text.strip()
+        # Conditioning text is a vocabulary hint, not captured audio. Models can
+        # copy it verbatim on background noise; do not turn that into a user
+        # command. Reject only the whole hint, never individual matching words.
+        if self.config.context.strip() and " ".join(text.split()) == " ".join(
+            self.config.context.split()
+        ):
+            raise ValueError("ASR echoed its conditioning prompt; transcript is unverified")
         if len(text) > 8000:
             raise ValueError("ASR transcript too large")
         return text

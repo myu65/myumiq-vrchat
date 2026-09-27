@@ -57,6 +57,9 @@ contract failures retry after two seconds, while transport failures keep the
 configured backoff. A successful finite EXPLORE_HOME interval may be followed by
 another exploration decision. One-shot commands remain deduplicated, explicit
 stop remains latched, and every movement still needs fresh Home/camera/output leases.
+Local audio-chat recognition rejects an exact echo of its configured conditioning
+hint as unverified recognition. Such an error does not become a heard user command;
+individual vocabulary words remain valid transcripts.
 
 ## Multi-rate migration (2026-09-26)
 

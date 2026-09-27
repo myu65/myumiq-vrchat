@@ -174,6 +174,20 @@ def test_fixed_language_prefill_accepts_full_or_suffix_without_history(monkeypat
     assert asr.metadata["language"] == "Japanese"
 
 
+@pytest.mark.parametrize("echo", [True, False])
+def test_conditioning_prompt_cannot_become_a_heard_user_command(monkeypatch, echo):
+    context = "VRChatで日本語の会話をしています。用語: アバター、しゃがむ、立つ。"
+    text = context if echo else "アバター、しゃがんで。"
+    asr = recognizer(
+        monkeypatch, lambda _: response(text), context=context, qwen3_language="Japanese"
+    )
+    if echo:
+        with pytest.raises(ValueError, match="conditioning prompt"):
+            asr.transcribe((0.0,) * 160, 16000)
+    else:
+        assert asr.transcribe((0.1,) * 160, 16000) == text
+
+
 def test_language_prefill_is_specific_and_context_is_bounded():
     for options in (
         {"qwen3_language": "Japanese", "text_format": "text"},
