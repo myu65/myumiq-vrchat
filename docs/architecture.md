@@ -164,6 +164,10 @@ protocol. Pose refresh cannot renew controls; input expiry neutralizes controls
 while a fresh pose remains held. Repeated servo output retains the producer's
 pose timestamp, so it cannot bypass the existing watchdog. Legacy complete-frame
 producers remain compatible and renew both channels when publishing a frame.
+A delayed complete frame can still carry a valid pose after its input lease has
+expired. It retains the original timestamps, so those inputs are neutralized
+while the pose/horizon continues only until its own existing deadline. Out-of-order
+frames and expired poses remain rejected; standalone stale inputs are rejected.
 
 The buffered actor can hand its bounded joint horizon to this same output owner.
 The servo samples the joint trajectory and its optional three-stage joint filter

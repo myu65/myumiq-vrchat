@@ -68,6 +68,19 @@ def test_ordinary_frame_cancels_future_motion_and_stale_trajectory_cannot_resume
     assert compositor.joint_servo is None
 
 
+def test_delayed_horizon_keeps_pose_lease_and_does_not_renew_inputs():
+    pose, command = trajectory()
+    compositor = ActuatorCompositor()
+    compositor.publish_trajectory(pose, command, 1.0, 1.2)
+    start = compositor.compose(1.2)
+    for i in range(1, 12):
+        later = compositor.compose(1.2 + i / 60)
+    assert later.head.position[0] > start.head.position[0]
+    assert later.left.controls == later.right.controls == Controls()
+    assert compositor.stamps["pose"] == 1.0
+    assert compositor.compose(1.51) is None
+
+
 def test_servo_joint_limits_residual_and_fixed_epoch_context():
     pose, command = trajectory()
     # Round-trip through the exact bounded JSON IPC representation.

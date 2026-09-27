@@ -72,3 +72,24 @@ def test_conflicting_hand_stick_and_stale_or_reordered_commands_are_rejected():
     for stamp, now in ((0.9, 1.0), (1.0, 1.2), (2.0, 1.0), (float("nan"), 1.0)):
         with pytest.raises(ValueError, match="stale|order"):
             compositor.publish_locomotion(command, stamp, now)
+
+
+def test_delayed_frame_releases_expired_inputs_but_preserves_fresh_pose():
+    compositor = ActuatorCompositor()
+    target = posture_target("standing")
+    pressed = Controls(sticks=((0.0, 0.0), (0.4, 0.3), (0.0, 0.0), (0.0, 0.0)), curls=(1.0,) * 5)
+    target = target.model_copy(
+        update={"left": target.left.model_copy(update={"controls": pressed})}
+    )
+    compositor.publish_frame(target, 1.0, 1.2)
+    held = compositor.compose(1.2)
+    assert held.head == target.head and held.pelvis == target.pelvis
+    assert held.left.controls == held.right.controls == Controls()
+    assert compositor.stamps == dict(pose=1.0, locomotion=1.0, hands=1.0)
+    assert compositor.compose(1.51) is None
+    with pytest.raises(ValueError, match="stale"):
+        compositor.publish_frame(target, 1.0, 1.51)
+    compositor.publish_locomotion(LocomotionCommand(forward=0.2), 2.0, 2.0)
+    with pytest.raises(ValueError, match="order"):
+        compositor.publish_frame(target, 1.9, 2.0)
+    assert compositor.stamps["pose"] == 1.0  # Failed ordering does not partly publish a pose.

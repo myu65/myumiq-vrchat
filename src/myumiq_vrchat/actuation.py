@@ -135,9 +135,15 @@ class ActuatorCompositor:
 
     def publish_frame(self, target, stamp, now):
         pose, locomotion, hands = split_target(target)
+        # A combined frame may arrive after its short input lease but before
+        # its pose expires. Validate ordering first, then retain the original
+        # timestamps; compose neutralizes the expired inputs independently.
+        for channel in ("pose", "locomotion", "hands"):
+            if stamp < self.stamps.get(channel, -math.inf):
+                raise ValueError("actuator command is stale or out of order")
         self.publish_pose(pose, stamp, now)
-        self.publish_locomotion(locomotion, stamp, now)
-        self.publish_hands(hands, stamp, now)
+        self.stamps["locomotion"] = self.stamps["hands"] = stamp
+        self.locomotion, self.hands = locomotion, hands
         self.legacy_controls = (target.left.controls, target.right.controls)
 
     def compose(self, now):
