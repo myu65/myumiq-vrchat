@@ -561,6 +561,13 @@ def run(args):
             if command_inbox.stop_requested.is_set():
                 break
             diagnostics.enter("motor")
+            if (
+                autonomous
+                and autonomous.learned_motor
+                and autonomous.learned_motor.settings.servo_horizon
+            ):
+                for emission in owner.emissions():
+                    autonomous.learned_motor.controller.record_emission(emission)
             rate_metadata = None
             if learned_goal and now < learned_goal[1]:
                 from .tracker_action import CONTRACT

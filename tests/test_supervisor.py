@@ -76,6 +76,7 @@ def test_joint_horizon_is_played_by_worker_during_producer_stall(tmp_path, endpo
     )
     supervisor = OutputSupervisor(tmp_path / "joint-servo.jsonl", config).start()
     try:
+        assert supervisor.emissions() == []  # Polling before the first command is nonblocking.
         now = time.perf_counter()
         command = command.model_copy(
             update={
@@ -93,6 +94,13 @@ def test_joint_horizon_is_played_by_worker_during_producer_stall(tmp_path, endpo
             if address == "/VMT/Raw/Driver" and params[0] == 1 and params[1] != 0
         ]
         assert len(set(positions)) >= 5
+        emissions = supervisor.emissions()
+        assert len(emissions) >= 5 and all(e.epoch == command.epoch for e in emissions)
+        from myumiq_vrchat.backends.osc import to_openvr
+
+        for report in emissions[:5]:
+            expected = to_openvr(report.pose.left).position
+            assert any(p == pytest.approx(expected, abs=1e-6) for p in positions)
         assert supervisor.alive
         receive_until(vmt, 0.3)
         assert supervisor.failed  # The trajectory cannot renew the producer's lease.

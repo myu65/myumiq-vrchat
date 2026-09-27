@@ -177,6 +177,12 @@ An ordinary frame (including hold/stop), new epoch, or expired pose retires the
 horizon. Locomotion and hands retain their independent original timestamps.
 The producer's sampled pose remains a prediction in replay; only device feedback
 is used for task completion and practice admission.
+With servo horizons, the same authenticated bounded UDP channel returns the poses
+actually submitted by the output owner, tagged with their trajectory epoch and
+send time. Device divergence checks compare against this emitted history, not a
+second filter sampled on the producer's different clock. Missing/old reports and
+old epochs cannot renew leases or pass confirmation. Reports are commands, never
+proof of tracking or avatar motion, and do not enter confirmed-step training.
 `servo_horizon=true` enables this handoff; `output_filter_s` is the time constant
 of each of three causal joint filters (0 disables them, maximum 0.2 seconds).
 Larger values trade response time for smoothness and must pass the unchanged

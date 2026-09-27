@@ -12,7 +12,13 @@ import time
 from pathlib import Path
 from threading import Lock
 
-from ..actuation import ActuatorCompositor, HandInputCommand, LocomotionCommand, PoseTarget
+from ..actuation import (
+    ActuatorCompositor,
+    HandInputCommand,
+    LocomotionCommand,
+    PoseTarget,
+    ServoEmission,
+)
 from ..body import ActuationTarget
 from .osc import DeviceOutput, LiveConfig, MockOutput
 from .vmt import LifecycleError, SafetyConfig, State, StopPolicy, VMTBackend
@@ -45,6 +51,7 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
         pose_ttl_s=safety.target_timeout, input_ttl_s=min(0.15, safety.target_timeout)
     )
     next_frame, output_sequence = 0.0, 0
+    producer = None
     previous, halted_at = None, None
     timing_start, timing_frames, last_frame = time.perf_counter(), 0, None
     timing_max = {"frame_gap_s": 0.0, "compose_s": 0.0, "submit_s": 0.0, "receive_s": 0.0}
@@ -129,6 +136,25 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
                         timing_frames += 1
                         last_frame = now
                         output_sequence += 1
+                        if compositor.joint_servo is not None and producer is not None:
+                            emission = ServoEmission(
+                                epoch=compositor.joint_servo.command.epoch,
+                                timestamp=time.perf_counter(),
+                                pose=PoseTarget.from_target(target),
+                            )
+                            try:
+                                sock.sendto(
+                                    json.dumps(
+                                        {
+                                            "token": token,
+                                            "emission": emission.model_dump(mode="json"),
+                                        },
+                                        separators=(",", ":"),
+                                    ).encode(),
+                                    producer,
+                                )
+                            except BlockingIOError:
+                                pass  # Missing reports expire; never block the output owner.
                 next_frame += 1 / 60
                 if next_frame <= now:
                     next_frame = now + 1 / 60
@@ -150,6 +176,7 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
                 continue
             if not isinstance(packet, dict) or packet.get("token") != token:
                 continue
+            producer = addr
             try:
                 receive_started = time.perf_counter()
                 if packet["kind"] == "heartbeat":
@@ -235,6 +262,7 @@ class OutputSupervisor:
         self._sequence = 0
         self._publish_guard = Lock()
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.bind(("127.0.0.1", 0))
         self._socket.setblocking(False)
         self._port = None
         self._process = ctx.Process(
@@ -315,6 +343,28 @@ class OutputSupervisor:
 
     def heartbeat(self):
         self._publish("heartbeat")
+
+    def emissions(self):
+        """Bounded reports of poses actually submitted by this owner, not device readback."""
+        results = []
+        with self._publish_guard:
+            for _ in range(64):
+                try:
+                    data, addr = self._socket.recvfrom(32769)
+                except BlockingIOError:
+                    break
+                if addr != ("127.0.0.1", self._port) or len(data) > 32768:
+                    continue
+                try:
+                    packet = json.loads(data)
+                    if packet.get("token") != self._token:
+                        continue
+                    report = ServoEmission.model_validate_json(json.dumps(packet["emission"]))
+                    if 0 <= time.perf_counter() - report.timestamp < 0.3:
+                        results.append(report)
+                except (ValueError, KeyError, AttributeError):
+                    continue
+        return results
 
     def close(self):
         self._stop.set()

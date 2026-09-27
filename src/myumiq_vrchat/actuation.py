@@ -6,9 +6,9 @@ Locomotion values are normalized input demands, not measured metres per second.
 
 import math
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
-from .body import EXTRA_PARTS, BodyTarget, Controls, Frozen, HandTarget, Pose, SignedUnit
+from .body import EXTRA_PARTS, BodyTarget, Controls, Frozen, HandTarget, Number, Pose, SignedUnit
 
 
 class PoseTarget(Frozen):
@@ -32,6 +32,26 @@ class PoseTarget(Frozen):
             right=target.right.pose,
             **{name: getattr(target, name) for name in EXTRA_PARTS},
         )
+
+    def to_target(self):
+        return BodyTarget(
+            head=self.head,
+            left=HandTarget(pose=self.left),
+            right=HandTarget(pose=self.right),
+            **{name: getattr(self, name) for name in EXTRA_PARTS},
+        )
+
+
+class ServoEmission(Frozen):
+    epoch: int = Field(ge=0)
+    timestamp: Number
+    pose: PoseTarget
+
+    @model_validator(mode="after")
+    def full_body(self):
+        if not self.pose.to_target().is_full_body:
+            raise ValueError("servo emission requires all eleven poses")
+        return self
 
 
 class LocomotionCommand(Frozen):

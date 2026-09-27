@@ -19,7 +19,9 @@ class BufferedActor:
     Fresh device feedback verifies the issued trajectory, not a predicted result.
     """
 
-    def __init__(self, controller, hz=20.0, horizon_s=0.4, *, output_filter_s=0.0):
+    def __init__(
+        self, controller, hz=20.0, horizon_s=0.4, *, output_filter_s=0.0, servo_feedback=False
+    ):
         if not 10 <= hz <= 30 or not 0.3 <= horizon_s <= 0.5:
             raise ValueError("invalid actor horizon configuration")
         self.base, self.hz, self.horizon_s = controller, hz, horizon_s
@@ -27,6 +29,8 @@ class BufferedActor:
         self.job = None
         self.epoch = 0
         self.issued = deque(maxlen=64)
+        self.emitted = deque(maxlen=64)
+        self.servo_feedback = servo_feedback
         self.last_now = None
         self.diverged_at = None
         self.started = False
@@ -61,6 +65,7 @@ class BufferedActor:
             )
         self.buffer = None
         self.issued.clear()
+        self.emitted.clear()
         self.started = False
         self.diverged_at = None
         self.next_submit = 0.0
@@ -73,6 +78,11 @@ class BufferedActor:
 
     def end_goal(self):
         self.reset()
+
+    def record_emission(self, report):
+        if report.epoch != self.epoch or (self.emitted and report.timestamp <= self.emitted[-1][0]):
+            return
+        self.emitted.append((report.timestamp, report.pose.to_target()))
 
     def observe(self, body, now):
         self.last_now = now
@@ -87,7 +97,8 @@ class BufferedActor:
         if self.buffer is None:
             return self.base.observe(body, now)
         # Each device can report a different packet from the short issued history.
-        recent = [pose for at, pose in self.issued if 0 <= now - at <= 0.3]
+        history = self.emitted if self.servo_feedback else self.issued
+        recent = [pose for at, pose in history if 0 <= now - at <= 0.3]
         if recent:
             errors = np.stack([pose_error(current, pose) for pose in recent])
             matched = (
@@ -226,6 +237,9 @@ class BufferedActor:
             "execution_mode": "buffered",
             "actor_hz": self.hz,
             "output_filter_s": self.output_filter_s,
+            "feedback_reference": "servo_sent_pose"
+            if self.servo_feedback
+            else "producer_prediction",
             "horizons": self.horizons,
             "missed_horizons": self.underruns,
             "horizon_pending": self.job is not None,

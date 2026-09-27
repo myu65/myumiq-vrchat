@@ -154,7 +154,9 @@ class ArticulatedIntentMotor:
             from .buffered_actor import BufferedActor
 
             self.controller = BufferedActor(
-                self.controller, output_filter_s=self.settings.output_filter_s
+                self.controller,
+                output_filter_s=self.settings.output_filter_s,
+                servo_feedback=self.settings.servo_horizon,
             )
         self.key = self.pose_goal = None
         self.active = False
@@ -221,6 +223,8 @@ class ArticulatedIntentMotor:
         }
         if self.settings.execution_mode == "buffered":
             fitting["feedback_contract"] = "observed_buffered_trajectory_v1"
+            if self.settings.servo_horizon:
+                fitting["feedback_contract"] = "observed_servo_emission_v1"
             fitting["output_filter_s"] = self.output_filter_for(intent.skill)
             fitting["servo_horizon"] = self.settings.servo_horizon
         if intent.body_goal is not None:

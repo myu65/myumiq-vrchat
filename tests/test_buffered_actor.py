@@ -111,6 +111,40 @@ def test_feedback_loss_and_divergence_stop_the_buffer(monkeypatch, tmp_path):
     assert "fresh device feedback" in control.error
 
 
+def test_servo_feedback_uses_emitted_history_and_rejects_wrong_epoch_or_divergence(
+    monkeypatch, tmp_path
+):
+    from myumiq_vrchat.actuation import PoseTarget, ServoEmission
+
+    control, pose, _ = prepared(monkeypatch, tmp_path)
+    control.servo_feedback = True
+    control.buffer = MotionBuffer(control.rig, control.state, pose)
+    control.buffer.extend([MotionKnot(t, control.state, np.zeros(66)) for t in (1.0, 1.4)])
+    control.started = True
+    control.issued.append((1.0, pose))
+    points = vector(pose)
+    points[:, 0] += 0.04
+    actual_sent = target_from_vector(points)
+    # A producer prediction at another phase cannot confirm actual servo output.
+    control.observe(simulated_body(actual_sent, 1.05), 1.05)
+    assert control.diverged_at == 1.05
+    emission = ServoEmission(
+        epoch=control.epoch, timestamp=1.05, pose=PoseTarget.from_target(actual_sent)
+    )
+    control.record_emission(emission.model_copy(update={"epoch": control.epoch + 1}))
+    assert not control.emitted
+    control.record_emission(emission)
+    assert control.observe(simulated_body(actual_sent, 1.06), 1.06)
+    assert control.diverged_at is None
+    # The unchanged 25mm / 0.1rad, 0.2-second divergence rule still stops motion.
+    control.observe(simulated_body(pose, 1.07), 1.07)
+    assert not control.observe(simulated_body(pose, 1.28), 1.28)
+    assert control.error == "device feedback diverged from the buffered trajectory"
+    control.reset()
+    control.record_emission(emission)
+    assert not control.emitted  # Late reports from the retired epoch stay retired.
+
+
 @pytest.mark.parametrize("stage", ["planning", "interpolation"])
 def test_buffer_rejects_hand_floor_crossing_with_feet_above_floor(monkeypatch, tmp_path, stage):
     control, pose, jobs = prepared(monkeypatch, tmp_path)
