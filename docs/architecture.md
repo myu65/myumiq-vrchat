@@ -183,6 +183,10 @@ send time. Device divergence checks compare against this emitted history, not a
 second filter sampled on the producer's different clock. Missing/old reports and
 old epochs cannot renew leases or pass confirmation. Reports are commands, never
 proof of tracking or avatar motion, and do not enter confirmed-step training.
+The shared actor's supervised calibration/pose commands still publish ordinary
+frames. Their feedback therefore uses producer-issued poses; emitted-horizon
+history is selected only when the autonomous path owns the horizon output.
+Available emission reports are drained before checking the current observation.
 `servo_horizon=true` enables this handoff; `output_filter_s` is the time constant
 of each of three causal joint filters (0 disables them, maximum 0.2 seconds).
 Larger values trade response time for smoothness and must pass the unchanged
