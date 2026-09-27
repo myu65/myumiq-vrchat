@@ -15,13 +15,13 @@ from threading import Lock
 from ..actuation import ActuatorCompositor, HandInputCommand, LocomotionCommand, PoseTarget
 from ..body import ActuationTarget
 from .osc import DeviceOutput, LiveConfig, MockOutput
-from .vmt import SafetyConfig, State, StopPolicy, VMTBackend
+from .vmt import LifecycleError, SafetyConfig, State, StopPolicy, VMTBackend
 
 
 def _worker(config_json, safety, token, ready, stop, failed, log_path):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
-    sock.settimeout(0.01)
+    sock.setblocking(False)
     output = (
         DeviceOutput(LiveConfig.model_validate_json(config_json)) if config_json else MockOutput()
     )
@@ -31,6 +31,8 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
     )
     next_frame, output_sequence = 0.0, 0
     previous, halted_at = None, None
+    timing_start, timing_frames, last_frame = time.perf_counter(), 0, None
+    timing_max = {"frame_gap_s": 0.0, "compose_s": 0.0, "submit_s": 0.0, "receive_s": 0.0}
     log = open(log_path, "x", encoding="utf-8", buffering=1)
 
     def record():
@@ -68,18 +70,57 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
             if halted_at is not None and time.perf_counter() - halted_at >= 2:
                 break  # Repeated neutral/disable attempts, then bounded orphan exit.
             now = time.perf_counter()
+            if now - timing_start >= 1:
+                log.write(
+                    json.dumps(
+                        {
+                            "event": "servo_timing",
+                            "timestamp": now,
+                            "frames": timing_frames,
+                            "window_s": now - timing_start,
+                            "maximum": timing_max,
+                        }
+                    )
+                    + "\n"
+                )
+                timing_start, timing_frames = now, 0
+                timing_max = dict.fromkeys(timing_max, 0.0)
             if halted_at is None and now >= next_frame:
                 target = compositor.compose(now)
+                composed = time.perf_counter()
+                timing_max["compose_s"] = max(timing_max["compose_s"], composed - now)
                 if target is not None:
                     # Replaying a pose is not evidence of a fresh producer. Keep
                     # its original timestamp so the existing watchdog still expires.
-                    backend.submit(lease, output_sequence, compositor.stamps["pose"], target)
-                    output_sequence += 1
-                next_frame = now + 1 / 60
-            sock.settimeout(max(0.0001, min(0.01, next_frame - time.perf_counter())))
+                    try:
+                        backend.submit(lease, output_sequence, compositor.stamps["pose"], target)
+                    except LifecycleError:
+                        # Expiry between poll and submission must still follow
+                        # the normal neutral/disable retry lifecycle.
+                        if backend.status.state != State.TIMED_OUT:
+                            raise
+                        record()
+                    else:
+                        timing_max["submit_s"] = max(
+                            timing_max["submit_s"], time.perf_counter() - composed
+                        )
+                        if last_frame is not None:
+                            timing_max["frame_gap_s"] = max(
+                                timing_max["frame_gap_s"], now - last_frame
+                            )
+                        timing_frames += 1
+                        last_frame = now
+                        output_sequence += 1
+                next_frame += 1 / 60
+                if next_frame <= now:
+                    next_frame = now + 1 / 60
             try:
                 data, addr = sock.recvfrom(32769)
-            except socket.timeout:
+            except BlockingIOError:
+                # Winsock receive timeouts can round to a much coarser clock
+                # than the servo period. Keep IPC nonblocking; Python's timed
+                # sleep lets this existing owner service its own deadline.
+                time.sleep(max(0.0001, min(0.001, next_frame - time.perf_counter())))
                 continue
             if addr[0] != "127.0.0.1" or len(data) > 32768:
                 continue
@@ -92,6 +133,7 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
             if not isinstance(packet, dict) or packet.get("token") != token:
                 continue
             try:
+                receive_started = time.perf_counter()
                 if packet["kind"] == "heartbeat":
                     backend.heartbeat(lease, packet["sequence"], packet["timestamp"])
                 elif packet["kind"] in ("frame", "trajectory"):
@@ -126,6 +168,9 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
                     methods[packet["kind"]](command, packet["timestamp"], time.perf_counter())
                 else:
                     raise ValueError("unknown supervisor message")
+                timing_max["receive_s"] = max(
+                    timing_max["receive_s"], time.perf_counter() - receive_started
+                )
             except Exception as exc:
                 failed.set()
                 # heartbeat/submit can discover expiry between polling and IPC.

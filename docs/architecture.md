@@ -173,6 +173,15 @@ An ordinary frame (including hold/stop), new epoch, or expired pose retires the
 horizon. Locomotion and hands retain their independent original timestamps.
 The producer's sampled pose remains a prediction in replay; only device feedback
 is used for task completion and practice admission.
+`servo_horizon=true` enables this handoff; `output_filter_s` is the time constant
+of each of three causal joint filters (0 disables them, maximum 0.2 seconds).
+Larger values trade response time for smoothness and must pass the unchanged
+duration and motion admission gates. Explicit holds/stops retire the trajectory
+immediately rather than waiting for the filter to settle.
+The supervisor uses nonblocking IPC and its own timed deadline, avoiding socket
+receive timeout granularity as a servo clock. Compact once-per-second timing
+records expose actual frame counts, maximum gaps and compose/send/receive costs;
+the configured frequency alone is not evidence of the achieved output cadence.
 
 The motor now samples a local 30 Hz locomotion controller on its existing clock.
 Continuous navigation refreshes short leases without pulse/settle gaps. Velocity

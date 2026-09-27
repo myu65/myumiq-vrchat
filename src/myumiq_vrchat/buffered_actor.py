@@ -33,7 +33,7 @@ class BufferedActor:
         self.horizons = self.underruns = 0
         self.reference = None
         self.next_submit = 0.0
-        if not math.isfinite(output_filter_s) or not 0 <= output_filter_s <= 0.1:
+        if not math.isfinite(output_filter_s) or not 0 <= output_filter_s <= 0.2:
             raise ValueError("invalid joint output filter time constant")
         self.output_filter_s = output_filter_s
         self.filtered_states = None

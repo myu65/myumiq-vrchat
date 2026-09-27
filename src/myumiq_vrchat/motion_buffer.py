@@ -13,16 +13,15 @@ from .whole_body import target_from_vector, vector
 
 
 def blend_state(rig, a, b, fraction):
-    rotations = []
+    # Apply the same convex rotation chart in one array operation. Per-joint
+    # numpy calls here multiply the servo cost across all three filter stages.
+    rotations = quaternion(
+        (1 - fraction) * rotation_vector(a.rotations) + fraction * rotation_vector(b.rotations)
+    )
     for i, (qa, qb) in enumerate(zip(a.rotations, b.rotations)):
-        if rig.joint_limits and rig.joint_limits[i] is not None:
-            # The configured rotation-vector box/ball is convex. This preserves
-            # its envelope, unlike independent Cartesian tracker interpolation.
-            q = quaternion((1 - fraction) * rotation_vector(qa) + fraction * rotation_vector(qb))
-        else:
-            q = interpolate(qa, qb, fraction, quaternion=True)
-        rotations.append(q)
-    state = JointState((1 - fraction) * a.root + fraction * b.root, np.asarray(rotations))
+        if not rig.joint_limits or rig.joint_limits[i] is None:
+            rotations[i] = interpolate(qa, qb, fraction, quaternion=True)
+    state = JointState((1 - fraction) * a.root + fraction * b.root, rotations)
     rig.validate_limits(state)
     return state
 

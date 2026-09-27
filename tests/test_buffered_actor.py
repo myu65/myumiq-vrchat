@@ -38,6 +38,29 @@ def test_buffer_interpolates_skeleton_preserves_residual_and_holds_after_end(mon
         rig.validate_limits(blend_state(rig, start, following, fraction))
 
 
+def test_vectorized_joint_blend_matches_individual_envelopes_and_root_slerp():
+    from test_joint_limits import bounded_fixture
+
+    from myumiq_vrchat.articulated_body import JointState
+    from myumiq_vrchat.joint_limits import quaternion, rotation_vector
+    from myumiq_vrchat.motion import interpolate
+
+    rig, states = bounded_fixture()
+    start = states[0]
+    angles = np.tile([0.2, 0.1, 0.05], (len(rig.names), 1))
+    angles[0] = [0.0, 2.0, 0.0]
+    end = JointState(start.root + 0.03, -quaternion(angles))
+    for fraction in (0.0, 0.2, 0.5, 0.9, 1.0):
+        blended = blend_state(rig, start, end, fraction)
+        for i, (qa, qb) in enumerate(zip(start.rotations, end.rotations)):
+            expected = (
+                quaternion((1 - fraction) * rotation_vector(qa) + fraction * rotation_vector(qb))
+                if rig.joint_limits[i]
+                else interpolate(qa, qb, fraction, quaternion=True)
+            )
+            np.testing.assert_allclose(blended.rotations[i], expected, atol=1e-12)
+
+
 def test_actor_continues_through_readback_delay_and_bounded_worker_stall(monkeypatch, tmp_path):
     control, pose, jobs = prepared(monkeypatch, tmp_path)
     control.observe(simulated_body(pose, 1), 1)
@@ -147,7 +170,7 @@ def test_joint_output_filter_reduces_start_and_stop_jumps_and_resets(monkeypatch
     assert paths[1]["maximum_jerk_m_s3"] < paths[0]["maximum_jerk_m_s3"] * 0.3
 
 
-@pytest.mark.parametrize("value", [-0.01, 0.11, float("nan")])
+@pytest.mark.parametrize("value", [-0.01, 0.21, float("nan")])
 def test_unbounded_output_filter_is_rejected(monkeypatch, tmp_path, value):
     control, _, _ = prepared(monkeypatch, tmp_path)
     with pytest.raises(ValueError, match="time constant"):

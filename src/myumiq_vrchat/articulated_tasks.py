@@ -33,7 +33,7 @@ class ArticulatedTasks(Frozen):
     condition_goals: bool = False
     motion_anchor: Literal["session", "current"] = "session"
     execution_mode: Literal["buffered", "feedback"] = "buffered"
-    output_filter_s: Number = Field(default=0.0, ge=0, le=0.1)
+    output_filter_s: Number = Field(default=0.0, ge=0, le=0.2)
     servo_horizon: bool = False
 
     @model_validator(mode="after")

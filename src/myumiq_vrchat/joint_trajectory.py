@@ -35,7 +35,7 @@ class JointTrajectory(Frozen):
     origin: JointSample
     measured: PoseTarget
     knots: tuple[JointSample, ...] = Field(min_length=1, max_length=12)
-    filter_s: Number = Field(ge=0, le=0.1)
+    filter_s: Number = Field(ge=0, le=0.2)
     floor: Number
 
     @model_validator(mode="after")
