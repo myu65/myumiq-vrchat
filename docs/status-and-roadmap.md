@@ -81,8 +81,9 @@ floor/actuator bounds. Research and the remaining learning gap are documented in
   whole-body transitions exist, but supported poses and bounded Home exploration
   do not establish arbitrary world navigation or obstacle avoidance. VRChat pose
   persistence is the actuator contract; gravity balancing is not the main task.
-- Open-ended goal generation in the independent decision path. Its current
-  executable candidate catalogue is bounded, and reranker judgment can be wrong.
+- Arbitrary goal execution in the independent decision path. The planner can
+  propose goals and comments, but the executable candidate catalogue remains
+  bounded and model judgment can be wrong.
 - Automatic execution of arbitrary novel capabilities, handshake, patting or
   autonomous avatar selection. Missing prerequisites become explicit learning tasks.
 - Useful real-VR experience-driven policy improvement with validated before/after

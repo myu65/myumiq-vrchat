@@ -71,7 +71,7 @@ def test_audio_request_is_independent_pcm_and_cold_timeout_is_separate(monkeypat
 def test_partial_or_malformed_responses_are_not_final_inputs(monkeypatch, text, finish, error):
     asr = recognizer(monkeypatch, lambda _: response(text, finish))
     with pytest.raises(ValueError, match=error):
-        asr.transcribe((0.0,), 16000)
+        asr.transcribe((0.1,), 16000)
 
 
 @pytest.mark.parametrize(
@@ -90,13 +90,13 @@ def test_local_asr_cannot_implicitly_send_audio_remotely(url):
 def test_size_and_total_deadline_are_enforced(monkeypatch):
     asr = recognizer(monkeypatch, lambda _: httpx.Response(200, content=b"x" * 131073))
     with pytest.raises(ValueError, match="too large"):
-        asr.transcribe((0.0,), 16000)
+        asr.transcribe((0.1,), 16000)
     clock = iter([0.0, 4.0])
     monkeypatch.setattr(
         "myumiq_vrchat.asr_adapters.time", SimpleNamespace(monotonic=lambda: next(clock))
     )
     with pytest.raises(TimeoutError, match="deadline"):
-        asr.transcribe((0.0,), 16000)
+        asr.transcribe((0.1,), 16000)
 
 
 @pytest.mark.parametrize(
@@ -167,23 +167,30 @@ def test_fixed_language_prefill_accepts_full_or_suffix_without_history(monkeypat
 
     asr = recognizer(monkeypatch, handle, qwen3_language="Japanese", context="日本語で会話中。")
     for _ in range(2):
-        assert asr.transcribe((0.0,), 16000) == ("手を振って。" if text else "")
+        assert asr.transcribe((0.1,), 16000) == ("手を振って。" if text else "")
     assert requests[0] == requests[1]
     assert [m["role"] for m in requests[0]["messages"]] == ["system", "user", "assistant"]
     assert requests[0]["messages"][-1]["content"] == "language Japanese<asr_text>"
     assert asr.metadata["language"] == "Japanese"
 
 
-@pytest.mark.parametrize("echo", [True, False])
+@pytest.mark.parametrize("echo", ["full", "vocabulary", None])
 def test_conditioning_prompt_cannot_become_a_heard_user_command(monkeypatch, echo):
-    context = "VRChatで日本語の会話をしています。用語: アバター、しゃがむ、立つ。"
-    text = context if echo else "アバター、しゃがんで。"
+    context = "VRChatで日本語の会話をしています。用語: アバター、しゃがむ、立つ、手を振る、足踏み、踊る、うなずく。"
+    text = (
+        context
+        if echo == "full"
+        else context.split("用語: ")[1]
+        if echo
+        else "アバター、しゃがんで。"
+    )
     asr = recognizer(
         monkeypatch, lambda _: response(text), context=context, qwen3_language="Japanese"
     )
     if echo:
         with pytest.raises(ValueError, match="conditioning prompt"):
-            asr.transcribe((0.0,) * 160, 16000)
+            asr.transcribe((0.1,) * 160, 16000)
+        asr.warmup()  # Warmup only proves model readiness; its text is never an input event.
     else:
         assert asr.transcribe((0.1,) * 160, 16000) == text
 
@@ -196,3 +203,12 @@ def test_language_prefill_is_specific_and_context_is_bounded():
     ):
         with pytest.raises(ValueError):
             LocalAudioChatSettings(base_url="http://localhost:18531/v1", model="asr", **options)
+
+
+def test_digital_silence_is_not_sent_as_speech_but_warmup_still_loads_the_model(monkeypatch):
+    requests = []
+    asr = recognizer(monkeypatch, lambda req: requests.append(req) or response())
+    assert asr.transcribe((0.0,) * 16000, 16000) == ""
+    assert not requests
+    asr.warmup()
+    assert len(requests) == 1

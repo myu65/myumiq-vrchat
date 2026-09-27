@@ -57,9 +57,12 @@ contract failures retry after two seconds, while transport failures keep the
 configured backoff. A successful finite EXPLORE_HOME interval may be followed by
 another exploration decision. One-shot commands remain deduplicated, explicit
 stop remains latched, and every movement still needs fresh Home/camera/output leases.
-Local audio-chat recognition rejects an exact echo of its configured conditioning
-hint as unverified recognition. Such an error does not become a heard user command;
-individual vocabulary words remain valid transcripts.
+Local audio-chat recognition rejects an exact echo or a long contiguous copied
+passage of its conditioning hint as unverified recognition. Such an error does
+not become a heard user command; individual vocabulary words remain valid
+transcripts. The optional conditioning context remains empty by default.
+Digitally silent PCM returns no transcript; explicit model warmup still reaches
+the service but never becomes a user input event.
 
 ## Multi-rate migration (2026-09-26)
 

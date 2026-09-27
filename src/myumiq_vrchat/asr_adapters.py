@@ -63,9 +63,9 @@ class LocalAudioChatASR:
     def warmup(self):
         # No user audio is captured before runtime readiness. Silence is only a
         # kernel/model warmup and is never published as an input utterance.
-        self._recognize((0.0,) * 16000, 16000, self.config.warmup_timeout_s)
+        self._recognize((0.0,) * 16000, 16000, self.config.warmup_timeout_s, warmup=True)
 
-    def _recognize(self, audio, sample_rate, timeout_s):
+    def _recognize(self, audio, sample_rate, timeout_s, *, warmup=False):
         import numpy as np
 
         if sample_rate != 16000 or not audio or len(audio) / sample_rate > self.config.max_audio_s:
@@ -73,6 +73,8 @@ class LocalAudioChatASR:
         samples = np.asarray(audio, dtype=np.float32)
         if samples.ndim != 1 or not np.isfinite(samples).all():
             raise ValueError("ASR audio must be finite and mono")
+        if not warmup and not np.any(samples):
+            return ""  # Digitally silent PCM contains no words, whatever the decoder predicts.
         stream = io.BytesIO()
         with wave.open(stream, "wb") as wav:
             wav.setnchannels(1)
@@ -139,10 +141,15 @@ class LocalAudioChatASR:
                 raise ValueError("Qwen3-ASR response is missing its transcript boundary")
         text = text.strip()
         # Conditioning text is a vocabulary hint, not captured audio. Models can
-        # copy it verbatim on background noise; do not turn that into a user
-        # command. Reject only the whole hint, never individual matching words.
-        if self.config.context.strip() and " ".join(text.split()) == " ".join(
-            self.config.context.split()
+        # copy it on background noise; do not turn that into a user command.
+        # A long contiguous copied passage is suspect too, but individual hinted
+        # vocabulary words remain valid recognition results.
+        hint, transcript = " ".join(self.config.context.split()), " ".join(text.split())
+        if (
+            not warmup
+            and hint
+            and transcript
+            and (transcript == hint or len(transcript) >= 16 and transcript in hint)
         ):
             raise ValueError("ASR echoed its conditioning prompt; transcript is unverified")
         if len(text) > 8000:
