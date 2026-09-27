@@ -1,5 +1,26 @@
 # Architecture
 
+## Condition practice and motion quality (2026-09-27)
+
+Practice keeps the original masked condition and its tolerance alongside the
+completed dense pose. Candidate training reuses the existing isolated PAMIQ
+TorchTrainer, differentiable rig, licensed reference rehearsal and explicit
+checkpoint export. Train and validation conditions are separate; validation is
+never sampled for gradients. Sample policy-visited intermediate states so that
+practice includes approach, recovery and settling, not only initial poses.
+Offline cases may carry a complete neutral-input start pose instead of a runtime
+posture name, keeping observed practice states out of the capability catalogue.
+
+Measure complete transitions: original condition error, planted-foot drift,
+tracker speed/acceleration/jerk and floor proposals. These are kinematic proxies,
+not a human-naturalness score or measured avatar contact/centre of mass. Preserve
+all-tracker floors and previous successful cases during candidate selection.
+Compare both the preceding candidate and the original hashed baseline on the same
+validation curriculum; successive rounds cannot silently accumulate regressions.
+No new runtime controller, device writer, scheduler or automatic promotion is
+introduced. A candidate must still be observed in the permitted Home mirror;
+device accuracy alone cannot pass that visual review.
+
 ## General body conditions (2026-09-27, current slice)
 
 Move the body-goal boundary from a list of posture names to conditions on an end

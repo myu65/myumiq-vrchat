@@ -49,6 +49,9 @@ class ExperienceRefinementTrainer(TorchTrainer):
         floor_weight=50.0,
         reference_rehearsal=False,
         whole_body_floor=False,
+        extra_objective_factory=None,
+        rollout_start_steps=0,
+        progress=None,
     ):
         if not 1 <= updates <= 1000 or not 1 <= horizon <= 8 or not 1 <= batch_size <= 64:
             raise ValueError("invalid bounded replay refinement budget")
@@ -56,6 +59,8 @@ class ExperienceRefinementTrainer(TorchTrainer):
             raise ValueError("invalid refinement learning rate or prior penalty")
         if not np.isfinite(floor_weight) or not 0 < floor_weight <= 1000:
             raise ValueError("invalid refinement floor penalty")
+        if not isinstance(rollout_start_steps, int) or not 0 <= rollout_start_steps <= 100:
+            raise ValueError("invalid practice rollout start budget")
         super().__init__(training_condition_data_user="experience", min_buffer_size=1)
         self.dynamics = DifferentiableRig(rig).float()
         self.updates, self.horizon, self.batch_size = updates, horizon, batch_size
@@ -64,6 +69,9 @@ class ExperienceRefinementTrainer(TorchTrainer):
             raise ValueError("reference rehearsal requires a mixed batch")
         self.reference_rehearsal = reference_rehearsal
         self.whole_body_floor = whole_body_floor
+        self.extra_objective_factory = extra_objective_factory
+        self.rollout_start_steps = rollout_start_steps
+        self.progress = progress
         self.objective = dict(
             reference_floor=reference_floor,
             floor_weight=floor_weight,
@@ -111,6 +119,9 @@ class ExperienceRefinementTrainer(TorchTrainer):
             key: torch.tensor(np.stack([getattr(c, key) for c in cases]), dtype=torch.float32)
             for key in ("root", "joints", "current", "goal", "previous")
         }
+        extra_objective = (
+            self.extra_objective_factory(cases) if self.extra_objective_factory else None
+        )
         optimizer = self.optimizers["actor"]
         for _ in range(self.updates):
             indices = rng.integers(experience_count, size=self.batch_size - reference_count)
@@ -140,6 +151,23 @@ class ExperienceRefinementTrainer(TorchTrainer):
                     self.objective["reference_floor"],
                 )
                 current[rows] = self.dynamics(root[rows], joints[rows])
+            if self.rollout_start_steps:
+                # Preserve measured residuals during model-only burn-in. Never
+                # invent readback IDs for these predicted intermediate starts.
+                with torch.no_grad():
+                    active = torch.ones(len(root), dtype=torch.bool)
+                    for _ in range(int(rng.integers(self.rollout_start_steps + 1))):
+                        action = self.actor(
+                            observation(current, goal, previous, dt, joints), deterministic=True
+                        )
+                        before = self.dynamics(root, joints)
+                        nr, nq, predicted, rates, _ = self.dynamics.step(root, joints, action, dt)
+                        after = preserve_observed_residual(before, predicted, current)
+                        active &= after[:, :, 2].amin(1) >= self.objective["reference_floor"]
+                        root = torch.where(active[:, None], nr, root)
+                        joints = torch.where(active[:, None, None], nq, joints)
+                        current = torch.where(active[:, None, None], after, current)
+                        previous = torch.where(active[:, None], rates, 0.0)
             objective = root.new_zeros(self.batch_size)
             optimizer.zero_grad()
             for step in range(self.horizon):
@@ -156,6 +184,8 @@ class ExperienceRefinementTrainer(TorchTrainer):
                     ).values()
                 )
                 reward = reward - self.anchor_weight * (action - anchored).square().mean(1)
+                if extra_objective is not None:
+                    reward = reward + extra_objective(indices, current, after, rates, previous, dt)
                 if self.whole_body_floor and self.objective["reference_floor"] is not None:
                     # Lying/reaching tasks can put hands or head below the feet.
                     # This adds non-foot clearance to the existing foot objective.
@@ -172,6 +202,8 @@ class ExperienceRefinementTrainer(TorchTrainer):
             optimizer.step()
             self.total_updates += 1
             self.losses.append(float(loss.detach()))
+            if self.progress and self.total_updates % 50 == 0:
+                self.progress(self.total_updates, self.losses[-1])
         self.finished = True
 
 

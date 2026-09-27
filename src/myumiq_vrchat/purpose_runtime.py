@@ -311,6 +311,14 @@ class PurposeRunner:
                 ),
                 None,
             )
+            # Keep the operator's conditions through completion and WAIT. The
+            # next explicit body request or manual release can replace them.
+            self.body_decision.maintained_posture = {
+                "skill": "BODY_GOAL",
+                "source": "operator",
+                "generation": self.owner.generation,
+            }
+            self.shared.working["maintained_posture"] = self.body_decision.maintained_posture
         self.epoch = self.owner.generation
 
     def accept(self, goal, now, origin="local_llm", *, retry_utterance_id=None):

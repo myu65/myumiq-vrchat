@@ -8,7 +8,9 @@ actorの400ms先読み・MotionBuffer・検出から独立した高速視覚追�
 [実行境界と受入条件](docs/architecture.md#buffered-execution-and-visual-continuity-2026-09-27)を参照。
 動作名によらず頭の高さ・手の位置などを組み合わせる
 [条件付き身体目標](docs/body-conditions.md)を追加しました。現在は明示的な条件入力が入口で、
-会話からの条件生成と条件を使う追加学習は次の段階です。
+会話からの条件生成は次の段階です。
+[条件を使う候補学習と動作全体の検証](docs/human-motion-practice.md)も追加しました。
+学習・未見条件の比較・鏡での確認を分け、候補を実機へ自動採用しません。
 視界を使う会話と行動判断、要求の採否、停止の保持は
 [視界・会話・行動の接続](docs/visual-conversation-actions.md)を参照。
 

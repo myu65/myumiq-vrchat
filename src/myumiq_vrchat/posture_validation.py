@@ -36,6 +36,7 @@ def transition(actor, start, goal, *, duration_s=12.0, dt=0.05, floor=0.0, crite
     settled_at, stable = None, 0
     floor_failure = minimum < floor
     maximum_step = 0.0
+    trajectory = [vector(current)[:, :3]] * 3
     for index in range(round(duration_s / dt)):
         error = pose_error(current, goal)
         within = bool(
@@ -63,7 +64,12 @@ def transition(actor, start, goal, *, duration_s=12.0, dt=0.05, floor=0.0, crite
         if floor_failure:
             break  # An invalid proposal is not applied, just as in the live controller.
         state, current, previous = following, target, rates
+        trajectory.append(vector(current)[:, :3])
     error = pose_error(current, goal)
+    from .motion_quality import trajectory_quality
+
+    # Include the stop, otherwise a sharp endpoint stop disappears from diagnostics.
+    trajectory.extend([trajectory[-1]] * 3)
     return {
         "scope": "ideal_actuator_fitted_start_not_avatar_or_contact",
         "accepted": settled_at is not None and not floor_failure,
@@ -75,6 +81,7 @@ def transition(actor, start, goal, *, duration_s=12.0, dt=0.05, floor=0.0, crite
         "maximum_rotation_error_rad": float(np.linalg.norm(error[:, 3:], axis=1).max()),
         "fit": fit,
         "endpoint": current.model_dump(mode="json"),
+        "motion_quality": trajectory_quality(trajectory, dt),
     }
 
 

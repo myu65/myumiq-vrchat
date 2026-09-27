@@ -5,25 +5,47 @@ import hashlib
 import json
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from .body import BodyGoal, Frozen, Number, WorldState
+from .body import BodyGoal, BodyTarget, Controls, Frozen, Number, WorldState
 
 
 class ConditionCase(Frozen):
     id: str = Field(min_length=1, max_length=80)
-    start: str = Field(min_length=1, max_length=64)
+    start: str | None = Field(default=None, min_length=1, max_length=64)
+    start_pose: BodyTarget | None = None
     goal: BodyGoal
     world: WorldState = WorldState()
     observed_at: Number = 0.0
     split: str = Field(pattern=r"^(train|heldout)$")
+
+    @model_validator(mode="after")
+    def one_start(self):
+        if (self.start is None) == (self.start_pose is None):
+            raise ValueError("provide one named start or an explicit complete start pose")
+        if self.start_pose is not None and (
+            not self.start_pose.is_full_body
+            or self.start_pose.left.controls != Controls()
+            or self.start_pose.right.controls != Controls()
+        ):
+            raise ValueError("practice starts require eleven poses and neutral controls")
+        return self
+
+
+def starting_pose(settings, case):
+    from .whole_body import vector
+
+    pose = case.start_pose or settings.goals.get(case.start)
+    if pose is None or vector(pose)[:, 2].min() < settings.reference_floor:
+        raise ValueError("practice start is missing or below the declared tracker plane")
+    return pose
 
 
 def evaluate_case(actor, settings, case):
     from .body_conditions import complete_goal, resolve_conditions
     from .posture_validation import transition
 
-    start = settings.goals[case.start]
+    start = starting_pose(settings, case)
     resolved = resolve_conditions(case.goal, start, case.world, case.observed_at)
     completed, report = complete_goal(
         actor.rig, start, resolved, reference_floor=settings.reference_floor
@@ -66,10 +88,10 @@ def main():
     if not isinstance(items, list) or not 1 <= len(items) <= 64:
         raise ValueError("provide one to 64 explicit condition cases")
     cases = [ConditionCase.model_validate_json(json.dumps(c)) for c in items]
-    if len({c.id for c in cases}) != len(cases) or any(
-        c.start not in settings.goals for c in cases
-    ):
+    if len({c.id for c in cases}) != len(cases):
         raise ValueError("cases require unique identities and configured starting postures")
+    for case in cases:
+        starting_pose(settings, case)
     actor = ArticulatedActor(outside_repo(settings.actor))
     if (
         actor.manifest["sha256"] != settings.actor_sha256

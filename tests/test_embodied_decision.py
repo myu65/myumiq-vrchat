@@ -914,6 +914,16 @@ def test_operator_condition_goal_preserves_dialogue_and_supersedes_old_request(
     assert runner.dialogue_epoch == dialogue_epoch
     decision = runner.body_decision
     assert decision.handled_request == heard["episode_id"]
+    # Seeing a person in a mirror cannot rotate a body with explicit foot/head
+    # conditions. The held condition also survives a later no-motion WAIT.
+    visual = {"basis": "observation", "request_status": "none"}
+    assert decision._request_conflict(
+        Intent(skill="LOOK_AT", target="reflection"), visual, None
+    ) == (True, False)
+    owner.choice = (owner.choice[0], 2.0, Intent(skill="WAIT"), "body_decision")
+    assert decision._request_conflict(
+        Intent(skill="LOOK_AT", target="reflection"), visual, None
+    ) == (True, False)
     report = {"basis": "latest_utterance", "request_status": "action"}
     assert decision._request_conflict(Intent(skill="STAND"), report, heard["episode_id"]) == (
         True,

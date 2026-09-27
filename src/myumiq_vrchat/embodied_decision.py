@@ -231,7 +231,12 @@ class EmbodiedDecision:
         held = self.maintained_posture
         if self.runner.owner.choice[2].skill == "BODY_GOAL":
             held = {"skill": "BODY_GOAL"}
-        compatible = not held or intent.skill in ("WAIT", "LOOK_AT", held["skill"])
+        # A whole-body turn also moves planted feet and changes orientation
+        # conditions. It is not a compatible gaze overlay on a condition goal.
+        compatible_skills = ("WAIT", held["skill"]) if held else ()
+        if held and held["skill"] != "BODY_GOAL":
+            compatible_skills += ("LOOK_AT",)
+        compatible = not held or intent.skill in compatible_skills
         return not compatible and not new_request, new_request
 
     def retry_available(self, intent, utterance_id):
