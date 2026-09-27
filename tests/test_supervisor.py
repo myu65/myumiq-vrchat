@@ -57,6 +57,49 @@ def receive_until(sock, seconds):
     return messages
 
 
+def test_joint_horizon_is_played_by_worker_during_producer_stall(tmp_path, endpoints):
+    from test_joint_trajectory import trajectory
+
+    from myumiq_vrchat.backends.osc import TrackerBinding
+    from myumiq_vrchat.body import EXTRA_PARTS
+
+    vmt, hmd = endpoints
+    pose, command = trajectory()
+    config = configuration(vmt.getsockname()[1], hmd.getsockname()[1]).model_copy(
+        update={
+            "trackers": tuple(
+                TrackerBinding(part=p, index=i + 3) for i, p in enumerate(EXTRA_PARTS)
+            ),
+            "safe_target": pose,
+            "full_body_envelope": 2.5,
+        }
+    )
+    supervisor = OutputSupervisor(tmp_path / "joint-servo.jsonl", config).start()
+    try:
+        now = time.perf_counter()
+        command = command.model_copy(
+            update={
+                "origin": command.origin.model_copy(update={"time": now}),
+                "knots": tuple(
+                    k.model_copy(update={"time": now + k.time - 1}) for k in command.knots
+                ),
+            }
+        )
+        supervisor.publish_trajectory(pose, command)
+        messages = receive_until(vmt, 0.38)
+        positions = [
+            tuple(params[3:6])
+            for address, params in messages
+            if address == "/VMT/Raw/Driver" and params[0] == 1 and params[1] != 0
+        ]
+        assert len(set(positions)) >= 5
+        assert supervisor.alive
+        receive_until(vmt, 0.3)
+        assert supervisor.failed  # The trajectory cannot renew the producer's lease.
+    finally:
+        supervisor.close()
+
+
 @pytest.fixture
 def endpoints():
     vmt, hmd = (

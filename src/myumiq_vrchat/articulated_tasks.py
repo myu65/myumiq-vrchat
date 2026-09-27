@@ -33,9 +33,13 @@ class ArticulatedTasks(Frozen):
     condition_goals: bool = False
     motion_anchor: Literal["session", "current"] = "session"
     execution_mode: Literal["buffered", "feedback"] = "buffered"
+    output_filter_s: Number = Field(default=0.0, ge=0, le=0.1)
+    servo_horizon: bool = False
 
     @model_validator(mode="after")
     def validate_goals(self):
+        if self.execution_mode != "buffered" and (self.output_filter_s or self.servo_horizon):
+            raise ValueError("joint filtering and servo horizons require buffered execution")
         if not (self.goals or self.motions or self.facing or self.condition_goals):
             raise ValueError("configure at least one articulated goal adapter")
         if len(self.goals) + len(self.motions) > 32:
@@ -146,7 +150,9 @@ class ArticulatedIntentMotor:
         if self.settings.execution_mode == "buffered":
             from .buffered_actor import BufferedActor
 
-            self.controller = BufferedActor(self.controller)
+            self.controller = BufferedActor(
+                self.controller, output_filter_s=self.settings.output_filter_s
+            )
         self.key = self.pose_goal = None
         self.active = False
         self.learning_metadata = None
@@ -165,6 +171,7 @@ class ArticulatedIntentMotor:
         from .body_conditions import ConditionPreparation
 
         self.conditions = ConditionPreparation()
+        self.output_trajectory = None
         try:
             for name, reference in self.settings.motions.items():
                 self.install_motion(name, reference.load(self.settings.reference_floor), reference)
@@ -211,6 +218,8 @@ class ArticulatedIntentMotor:
         }
         if self.settings.execution_mode == "buffered":
             fitting["feedback_contract"] = "observed_buffered_trajectory_v1"
+            fitting["output_filter_s"] = self.settings.output_filter_s
+            fitting["servo_horizon"] = self.settings.servo_horizon
         if intent.body_goal is not None:
             fitting["condition_goal_sha256"] = hashlib.sha256(
                 intent.body_goal.model_dump_json().encode()
@@ -311,6 +320,7 @@ class ArticulatedIntentMotor:
 
     def hold(self):
         self.learning_metadata = None
+        self.output_trajectory = None
         self.conditions.reset()
         if self.active:
             self.controller.end_goal()
@@ -320,6 +330,7 @@ class ArticulatedIntentMotor:
 
     def step(self, body, choice, now, dt):
         self.learning_metadata = None
+        self.output_trajectory = None
         key, accepted, intent, _ = choice
         current = state_target(body)
         if key != self.key:
@@ -502,6 +513,8 @@ class ArticulatedIntentMotor:
             return self._finish(current, self.controller.error)
         if starting and getattr(self.controller, "started", False):
             self.execution = replace(self.execution, started_at=now, deadline=deadline)
+        if self.settings.servo_horizon:
+            self.output_trajectory = self.controller.trajectory()
         if obs is not None:
             if starting:
                 self.execution = replace(self.execution, started_at=now, deadline=deadline)

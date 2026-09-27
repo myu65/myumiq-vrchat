@@ -642,7 +642,15 @@ def run(args):
                             }
                         )
             diagnostics.enter("publish")
-            owner.publish(action)
+            trajectory = None
+            if autonomous and autonomous.enabled and not learned_goal and not pulse:
+                motor = autonomous.learned_motor
+                if motor and motor.active:
+                    trajectory = motor.output_trajectory
+            if trajectory is not None:
+                owner.publish_trajectory(action, trajectory)
+            else:
+                owner.publish(action)
             current = action
             diagnostics.enter("replay")
             if rate_metadata is not None:

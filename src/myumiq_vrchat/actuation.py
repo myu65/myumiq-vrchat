@@ -94,6 +94,7 @@ class ActuatorCompositor:
         self.input_ttl_s, self.pose_ttl_s = input_ttl_s, pose_ttl_s
         self.pose = self.locomotion = self.hands = self.legacy_controls = None
         self.stamps = {}
+        self.joint_servo = None
 
     def _stamp(self, channel, stamp, now, ttl):
         if (
@@ -107,6 +108,20 @@ class ActuatorCompositor:
     def publish_pose(self, pose, stamp, now):
         self._stamp("pose", stamp, now, self.pose_ttl_s)
         self.pose = pose
+        self.joint_servo = None
+
+    def publish_trajectory(self, target, command, stamp, now):
+        from .joint_trajectory import JointServo
+
+        if command.knots[-1].time > stamp + 0.51 or command.knots[0].time > stamp + 0.01:
+            raise ValueError("trajectory outside the producer's finite horizon")
+        servo = self.joint_servo
+        self.publish_frame(target, stamp, now)
+        if servo is None or servo.command.epoch != command.epoch:
+            servo = JointServo(command, now)
+        else:
+            servo.update(command)
+        self.joint_servo = servo
 
     def publish_locomotion(self, command, stamp, now):
         self._stamp("locomotion", stamp, now, self.input_ttl_s)
@@ -128,7 +143,9 @@ class ActuatorCompositor:
     def compose(self, now):
         pose_at = self.stamps.get("pose")
         if self.pose is None or not 0 <= now - pose_at < self.pose_ttl_s:
+            self.joint_servo = None
             return None
+        pose = self.joint_servo.sample(now) if self.joint_servo is not None else self.pose
 
         def fresh(key):
             return key in self.stamps and 0 <= now - self.stamps[key] < self.input_ttl_s
@@ -155,8 +172,8 @@ class ActuatorCompositor:
             left = combine(hands.left, (motion.strafe, motion.forward))
             right = combine(hands.right, (motion.turn, 0.0))
         return BodyTarget(
-            head=self.pose.head,
-            left=HandTarget(pose=self.pose.left, controls=left),
-            right=HandTarget(pose=self.pose.right, controls=right),
-            **{name: getattr(self.pose, name) for name in EXTRA_PARTS},
+            head=pose.head,
+            left=HandTarget(pose=pose.left, controls=left),
+            right=HandTarget(pose=pose.right, controls=right),
+            **{name: getattr(pose, name) for name in EXTRA_PARTS},
         )

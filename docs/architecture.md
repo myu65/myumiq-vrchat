@@ -165,6 +165,15 @@ while a fresh pose remains held. Repeated servo output retains the producer's
 pose timestamp, so it cannot bypass the existing watchdog. Legacy complete-frame
 producers remain compatible and renew both channels when publishing a frame.
 
+The buffered actor can hand its bounded joint horizon to this same output owner.
+The servo samples the joint trajectory and its optional three-stage joint filter
+at its own clock, preserving fitted tracker residuals and checking the tracking
+floor on every emitted sample. It does not infer, extrapolate, or renew leases.
+An ordinary frame (including hold/stop), new epoch, or expired pose retires the
+horizon. Locomotion and hands retain their independent original timestamps.
+The producer's sampled pose remains a prediction in replay; only device feedback
+is used for task completion and practice admission.
+
 The motor now samples a local 30 Hz locomotion controller on its existing clock.
 Continuous navigation refreshes short leases without pulse/settle gaps. Velocity
 requests ramp with bounded acceleration/deceleration; lost authority, explicit
@@ -1566,6 +1575,16 @@ so a changed reference does not inherit an unrelated task's execution block.
 # Motion acquisition across skeletons and locomotion
 
 ## Bounded local / live practice cycles
+
+An optional bounded three-stage joint-space output filter smooths the buffered
+actor path before forward kinematics. It blends only actor-generated joint states,
+preserving the existing convex joint envelopes and measured pose residuals.
+The time constant is fixed in the task profile, zero retains legacy behavior.
+It does not generate goals, move trackers independently or alter admission limits.
+Reset/stop discards the filter and queued trajectory; fitting uses the last filtered
+state only as a prior. Check every resulting eleven-tracker pose against the floor.
+Its delay and path changes require measured acceptance with the original deadline,
+including motion references and transitions, before choosing it for normal use.
 
 An offline coordinator composes the existing condition trainer, frozen reference
 evaluation and an explicitly configured host trial adapter. It is not a motor or

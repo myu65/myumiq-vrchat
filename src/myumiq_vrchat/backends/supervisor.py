@@ -94,10 +94,20 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
             try:
                 if packet["kind"] == "heartbeat":
                     backend.heartbeat(lease, packet["sequence"], packet["timestamp"])
-                elif packet["kind"] == "frame":
+                elif packet["kind"] in ("frame", "trajectory"):
                     backend.heartbeat(lease, packet["sequence"], packet["timestamp"])
                     target = ActuationTarget.model_validate_json(json.dumps(packet["target"]))
-                    compositor.publish_frame(target, packet["timestamp"], time.perf_counter())
+                    if packet["kind"] == "trajectory":
+                        from ..joint_trajectory import JointTrajectory
+
+                        command = JointTrajectory.model_validate_json(
+                            json.dumps(packet["trajectory"])
+                        )
+                        compositor.publish_trajectory(
+                            target, command, packet["timestamp"], time.perf_counter()
+                        )
+                    else:
+                        compositor.publish_frame(target, packet["timestamp"], time.perf_counter())
                 elif packet["kind"] in ("pose", "locomotion", "hands"):
                     backend.heartbeat(lease, packet["sequence"], packet["timestamp"])
                     types = {
@@ -201,11 +211,11 @@ class OutputSupervisor:
     def failed(self):
         return self._failed.is_set()
 
-    def _publish(self, kind, target=None):
+    def _publish(self, kind, target=None, trajectory=None):
         with self._publish_guard:
-            self._publish_locked(kind, target)
+            self._publish_locked(kind, target, trajectory)
 
-    def _publish_locked(self, kind, target=None):
+    def _publish_locked(self, kind, target=None, trajectory=None):
         if not self.alive or self._port is None:
             raise RuntimeError("output supervisor is not running")
         packet = {
@@ -216,14 +226,19 @@ class OutputSupervisor:
         }
         if target is not None:
             packet["target"] = target.model_dump(mode="json")
+        if trajectory is not None:
+            packet["trajectory"] = trajectory.model_dump(mode="json")
         self._sequence += 1
-        data = json.dumps(packet, allow_nan=False).encode()
+        data = json.dumps(packet, allow_nan=False, separators=(",", ":")).encode()
         if len(data) > 32768:
             raise ValueError("frame exceeds IPC packet size")
         self._socket.sendto(data, ("127.0.0.1", self._port))
 
     def publish(self, target: ActuationTarget):
         self._publish("frame", target)
+
+    def publish_trajectory(self, target, trajectory):
+        self._publish("trajectory", target, trajectory)
 
     def publish_pose(self, target: PoseTarget):
         """Refresh pose only; retained inputs keep their own expiry."""

@@ -108,3 +108,47 @@ def test_buffer_rejects_hand_floor_crossing_with_feet_above_floor(monkeypatch, t
         monkeypatch.setattr(control.buffer, "pose", lambda state: target_from_vector(points))
         held, _, _ = control.step(simulated_body(pose, 1), pose, 0.01)
         assert held == pose and "tracking floor" in control.error
+
+
+def test_joint_output_filter_reduces_start_and_stop_jumps_and_resets(monkeypatch, tmp_path):
+    from myumiq_vrchat.articulated_body import JointState
+    from myumiq_vrchat.motion_quality import trajectory_quality
+
+    paths = []
+    for constant in (0.0, 0.035):
+        control, pose, _ = prepared(monkeypatch, tmp_path)
+        control.output_filter_s = constant
+        start = control.state
+        end = JointState(start.root + np.array([0.03, 0, 0]), start.rotations.copy())
+        control.buffer = MotionBuffer(control.rig, start, pose)
+        control.buffer.knots = [
+            MotionKnot(t, s, np.zeros(66)) for t, s in ((1.0, start), (1.05, end), (1.5, end))
+        ]
+        control.filtered_states, control.filtered_at = [start] * 3, 1.0
+        control.next_submit = 10.0
+        poses = []
+        for i in range(70):
+            now = 1 + i * 0.01
+            control.last_now = now
+            pose, _, _ = control.step(simulated_body(pose, now), pose, 0.01)
+            assert control.error is None
+            control.rig.validate_limits(control.filtered_states[-1])
+            poses.append(vector(pose)[:, :3])
+        paths.append(trajectory_quality(poses, 0.01))
+        assert np.max(np.abs(vector(pose) - vector(control.rig.forward(end)))) < 1e-4
+        final_state = control.filtered_states[-1] if constant else end
+        control.reset()
+        assert control.filtered_states is None and control.buffer is None
+        if constant:
+            np.testing.assert_allclose(control.base.prior.root, final_state.root)
+        else:
+            np.testing.assert_allclose(control.base.prior.root, end.root)
+    assert paths[1]["maximum_acceleration_m_s2"] < paths[0]["maximum_acceleration_m_s2"] * 0.3
+    assert paths[1]["maximum_jerk_m_s3"] < paths[0]["maximum_jerk_m_s3"] * 0.3
+
+
+@pytest.mark.parametrize("value", [-0.01, 0.11, float("nan")])
+def test_unbounded_output_filter_is_rejected(monkeypatch, tmp_path, value):
+    control, _, _ = prepared(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="time constant"):
+        BufferedActor(control.base, output_filter_s=value)

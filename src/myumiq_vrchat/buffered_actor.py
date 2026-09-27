@@ -1,12 +1,13 @@
 """Predict short motion horizons without waiting for individual device packets."""
 
+import math
 from collections import deque
 from threading import Event
 
 import numpy as np
 
 from .articulated_body import articulated_observation
-from .motion_buffer import MotionBuffer, MotionKnot
+from .motion_buffer import MotionBuffer, MotionKnot, blend_state
 from .tracker_policy import pose_error
 from .whole_body import PARTS, state_target, vector
 
@@ -18,7 +19,7 @@ class BufferedActor:
     Fresh device feedback verifies the issued trajectory, not a predicted result.
     """
 
-    def __init__(self, controller, hz=20.0, horizon_s=0.4):
+    def __init__(self, controller, hz=20.0, horizon_s=0.4, *, output_filter_s=0.0):
         if not 10 <= hz <= 30 or not 0.3 <= horizon_s <= 0.5:
             raise ValueError("invalid actor horizon configuration")
         self.base, self.hz, self.horizon_s = controller, hz, horizon_s
@@ -32,6 +33,12 @@ class BufferedActor:
         self.horizons = self.underruns = 0
         self.reference = None
         self.next_submit = 0.0
+        if not math.isfinite(output_filter_s) or not 0 <= output_filter_s <= 0.1:
+            raise ValueError("invalid joint output filter time constant")
+        self.output_filter_s = output_filter_s
+        self.filtered_states = None
+        self.filtered_at = None
+        self.origin = self.measured = None
 
     def __getattr__(self, name):
         return getattr(self.base, name)
@@ -47,12 +54,18 @@ class BufferedActor:
         if self.buffer is not None and self.last_now is not None:
             # A nearby latent estimate accelerates the next measured fit. It is
             # only an initial guess, never accepted as a new device observation.
-            self.base.state = self.buffer.sample(self.last_now).state
+            self.base.state = (
+                self.filtered_states[-1]
+                if self.output_filter_s and self.filtered_states is not None
+                else self.buffer.sample(self.last_now).state
+            )
         self.buffer = None
         self.issued.clear()
         self.started = False
         self.diverged_at = None
         self.next_submit = 0.0
+        self.filtered_states = self.filtered_at = None
+        self.origin = self.measured = None
         self.base.reset()
 
     def new_goal(self):
@@ -139,6 +152,9 @@ class BufferedActor:
         if self.buffer is None:
             self.buffer = MotionBuffer(self.base.rig, self.base.state, current)
             self.buffer.knots = [MotionKnot(now, self.base.state, np.zeros(66))]
+            self.filtered_states = [self.base.state] * 3
+            self.filtered_at = now
+            self.origin, self.measured = self.buffer.knots[0], current
         end = now + min(self.horizon_s, remaining_s if remaining_s is not None else self.horizon_s)
         if self.job is None and now >= self.next_submit and self.buffer.knots[-1].time - now < 0.25:
             anchor = now + 0.15
@@ -153,7 +169,17 @@ class BufferedActor:
                 self.job = future, self.epoch, anchor, cancel
                 self.next_submit = now + 0.05
         knot = self.buffer.sample(now)
-        action = self.buffer.pose(knot.state)
+        output_state = knot.state
+        if self.output_filter_s:
+            elapsed = min(0.05, max(0.0, now - self.filtered_at))
+            alpha = -math.expm1(-elapsed / self.output_filter_s)
+            # Three causal convex stages attenuate velocity/acceleration jumps
+            # without inventing tracker targets outside the actor's joint path.
+            for i, previous_state in enumerate(self.filtered_states):
+                output_state = blend_state(self.rig, previous_state, output_state, alpha)
+                self.filtered_states[i] = output_state
+            self.filtered_at = now
+        action = self.buffer.pose(output_state)
         if (
             self.base.reference_floor is not None
             and vector(action)[:, 2].min() < self.base.reference_floor
@@ -170,6 +196,27 @@ class BufferedActor:
         self.base.steps_executed += 1
         return action, None, None
 
+    def trajectory(self):
+        """Only the task owner may publish this after an actual actor step."""
+        from .actuation import PoseTarget
+        from .joint_trajectory import JointSample, JointTrajectory
+
+        if self.buffer is None or not self.ready:
+            return None
+        now = self.last_now
+        first = self.buffer.sample(now)
+        knots = [MotionKnot(now, first.state, first.rates)]
+        knots += [k for k in self.buffer.knots if now < k.time <= now + 0.5]
+        return JointTrajectory(
+            epoch=self.epoch,
+            rig=self.rig,
+            origin=JointSample.from_knot(self.origin),
+            measured=PoseTarget.from_target(self.measured),
+            knots=tuple(JointSample.from_knot(k) for k in knots),
+            filter_s=self.output_filter_s,
+            floor=self.base.reference_floor,
+        )
+
     def replay_observation(self, *args, **kwargs):
         return None
 
@@ -178,6 +225,7 @@ class BufferedActor:
             **self.base.status(),
             "execution_mode": "buffered",
             "actor_hz": self.hz,
+            "output_filter_s": self.output_filter_s,
             "horizons": self.horizons,
             "missed_horizons": self.underruns,
             "horizon_pending": self.job is not None,
