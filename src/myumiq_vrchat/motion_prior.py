@@ -144,6 +144,7 @@ class MotionPlayback:
         self.last_observation = None
         self.first_confirmed_pose = None
         self.movement = 0.0
+        self.prediction_allowed = False
 
     def target(self, phase=None):
         points = vector(self.model.sample(self.phase if phase is None else phase))
@@ -161,11 +162,13 @@ class MotionPlayback:
         elapsed = dt if self.last_observation is None else timestamp - self.last_observation
         self.last_observation = timestamp
         error = pose_error(current, self.target())
+        self.prediction_allowed = False
         if (
             np.linalg.norm(error[:, :3], axis=1).max() > 0.12
             or np.linalg.norm(error[:, 3:], axis=1).max() > 0.35
         ):
             return
+        self.prediction_allowed = True
         self.covered.add(min(15, int(min(self.phase, 1.0) * 16)))
         points = vector(current)[:, :3]
         if self.first_confirmed_pose is None:
@@ -184,6 +187,20 @@ class MotionPlayback:
             else min(1.0, self.phase + increment)
         )
 
+    def future_target(self, ahead_s, *, speed_scale=1.0):
+        """Plan toward the held phase until measured tracking catches up.
+
+        A buffered actor must not chase a future reference while the phase clock
+        rejects its current pose. That can keep it permanently outside the same
+        tracking envelope that must permit the next phase.
+        """
+        if not math.isfinite(ahead_s) or not 0 <= ahead_s <= 0.5:
+            raise ValueError("reference prediction requires a bounded horizon")
+        if not math.isfinite(speed_scale) or not 0 <= speed_scale <= 1:
+            raise ValueError("gait speed scale must be within 0..1")
+        increment = ahead_s * self.rate * speed_scale / self.model.duration_s
+        return self.target(self.phase + increment if self.prediction_allowed else self.phase)
+
     def evidence(self):
         return {
             "clip": self.model.clip,
@@ -195,4 +212,5 @@ class MotionPlayback:
             "endpoint_required": not isinstance(self.model, PeriodicImitation),
             "reference_kind": "periodic" if isinstance(self.model, PeriodicImitation) else "finite",
             "world_displacement_observed": False,
+            "reference_prediction_allowed": self.prediction_allowed,
         }

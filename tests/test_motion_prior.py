@@ -103,6 +103,33 @@ def test_no_phase_progress_from_wrong_duplicate_or_stale_feedback():
     assert playback.phase - phase <= 1 / 32  # no phase catch-up after a long gap
 
 
+def test_buffer_prediction_waits_for_tracking_and_recovers_without_relaxing_tolerance():
+    motion = model()
+    playback = MotionPlayback(motion, motion.sample(0), 1.0)
+    np.testing.assert_allclose(vector(playback.future_target(0.4)), vector(playback.target()))
+    playback.observe(playback.target(), 1.0, 0.02)
+    assert playback.prediction_allowed
+    assert not np.allclose(vector(playback.future_target(0.4)), vector(playback.target()))
+    phase = playback.phase
+    displaced = vector(playback.target())
+    displaced[3, 0] += 0.121  # just beyond the unchanged per-tracker limit
+    playback.observe(target_from_vector(displaced), 1.02, 0.02)
+    assert playback.phase == phase and not playback.prediction_allowed
+    np.testing.assert_allclose(vector(playback.future_target(0.4)), vector(playback.target()))
+    playback.observe(playback.target(), 1.04, 0.02)
+    assert playback.phase > phase and playback.prediction_allowed
+    np.testing.assert_allclose(
+        vector(playback.future_target(0.4, speed_scale=0)), vector(playback.target())
+    )
+
+
+@pytest.mark.parametrize("ahead", [-0.1, 0.51, float("nan")])
+def test_reference_prediction_rejects_unbounded_horizon(ahead):
+    motion = model()
+    with pytest.raises(ValueError, match="bounded horizon"):
+        MotionPlayback(motion, motion.sample(0), 1.0).future_target(ahead)
+
+
 def test_session_origin_does_not_integrate_previous_endpoint_error():
     motion = model()
     current = motion.sample(0)

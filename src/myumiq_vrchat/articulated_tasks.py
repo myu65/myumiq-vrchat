@@ -484,12 +484,7 @@ class ArticulatedIntentMotor:
             reference = copy.copy(self.playback) if self.playback and not exiting else None
             speed = self.locomotion_state.gait_speed_scale if self.locomotion_state else 1.0
             self.controller.reference = (
-                (
-                    lambda at: reference.target(
-                        reference.phase
-                        + max(0, at - now) * reference.rate * speed / reference.model.duration_s
-                    )
-                )
+                (lambda at: reference.future_target(max(0, at - now), speed_scale=speed))
                 if reference
                 else None
             )

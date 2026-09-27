@@ -1539,6 +1539,13 @@ separately from endpoint error. A stationary body at a clip's final pose is not
 evidence that the motion was performed. Tracking-root changes, controller inputs
 and measured world displacement remain separate channels.
 
+Buffered reference prediction uses the same feedback decision as the phase clock.
+Until measured tracking is within the unchanged per-tracker pose envelope, the
+next horizon aims at the held phase instead of chasing a later sample. Confirmed
+tracking enables bounded lookahead again. This does not relax completion limits
+or make an unreachable reference achievable; evaluate repeated motions from
+recorded starting poses as well as the ideal configured pose.
+
 The existing bounded capability-learning worker trains configured licensed clips,
 evaluates withheld clip times, and installs the resulting prior between actions.
 The executive persists artifact hashes and restores verified artifacts, not saved
