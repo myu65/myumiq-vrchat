@@ -44,6 +44,9 @@ def test_commands_are_bound_to_session_and_short_delivery_window():
         dict(kind="menu", hand="both"),
         dict(kind="play", name="lying"),
         dict(kind="trigger", hand="left", duration_s=2),
+        dict(kind="fist", hand="both", duration_s=2),
+        dict(kind="fist"),
+        dict(kind="open_hand", hand="other"),
         dict(kind="tracker_rates", rates=[0.0] * 65),
         dict(kind="tracker_rates", rates=[2.0] * 66),
         dict(kind="posture", name="standing", rates=[0.0] * 66),
@@ -62,6 +65,17 @@ def test_trigger_snapshot_has_consistent_index_and_released_other_inputs():
     assert controls.triggers[0] == controls.curls[1] == 1
     assert not any(controls.buttons)
     assert not any(controls.trigger_clicks[1:])
+
+
+@pytest.mark.parametrize("kind,curl", [("fist", 1.0), ("open_hand", 0.0)])
+@pytest.mark.parametrize("hand", ["left", "right", "both"])
+def test_finger_diagnostic_uses_bounded_skeleton_only_input(kind, curl, hand):
+    command = Command(session="one", issued=10.0, kind=kind, hand=hand, duration_s=0.5)
+    controls = pulse_controls(command.kind)
+    assert controls.curls == (curl,) * 5
+    assert controls.model_copy(update={"curls": (0.0,) * 5}) == pulse_controls("open_hand")
+    assert command.fresh("one", 11.0)
+    assert not command.fresh("other", 11.0)
 
 
 def test_atomic_command_commit_retries_transient_windows_sharing_error(tmp_path, monkeypatch):
@@ -361,7 +375,11 @@ def test_learned_whole_body_goal_switch_and_manual_override_record_next_feedback
 
 
 @pytest.mark.usefixtures("synchronous_commands")
-def test_manual_override_holds_current_pose_and_cancels_active_drive(tmp_path, monkeypatch):
+@pytest.mark.parametrize("input_kind", ["drive", "fist"])
+@pytest.mark.parametrize("release", ["manual", "expiry"])
+def test_manual_override_or_expiry_releases_active_input(
+    tmp_path, monkeypatch, input_kind, release
+):
     from types import SimpleNamespace
 
     import myumiq_vrchat.body_console as module
@@ -399,8 +417,12 @@ def test_manual_override_holds_current_pose_and_cancels_active_drive(tmp_path, m
             published.append(target)
             payload = {
                 1: dict(kind="posture", name="lying"),
-                20: dict(kind="drive", direction="forward", duration_s=0.5),
-                21: dict(kind="manual"),
+                20: (
+                    dict(kind="drive", direction="forward", duration_s=0.5)
+                    if input_kind == "drive"
+                    else dict(kind="fist", hand="both", duration_s=0.5)
+                ),
+                21: dict(kind="manual") if release == "manual" else None,
             }.get(len(published))
             if payload:
                 token = json.loads((session / "session.json").read_text())["session"]
@@ -424,7 +446,13 @@ def test_manual_override_holds_current_pose_and_cancels_active_drive(tmp_path, m
     )
     moving, held = published[20], published[21]
     assert moving.head != published[0].head
-    assert moving.left.controls.sticks[1][1] > 0
+    if input_kind == "drive":
+        assert moving.left.controls.sticks[1][1] > 0
+    else:
+        assert moving.left.controls.curls == moving.right.controls.curls == (1.0,) * 5
+    assert published[-1].left.controls == published[-1].right.controls == Controls()
+    if release == "expiry":
+        return
     for target in (held, published[-1]):
         assert target.left.controls == target.right.controls == Controls()
         for part in PARTS:

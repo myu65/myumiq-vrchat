@@ -42,6 +42,8 @@ class Command(Frozen):
         "posture",
         "menu",
         "trigger",
+        "fist",
+        "open_hand",
         "aim",
         "view",
         "reference",
@@ -105,8 +107,10 @@ class Command(Frozen):
             raise ValueError("posture requires exactly one posture name")
         if (self.kind in ("aim", "view")) != (self.pose is not None):
             raise ValueError("aim/view requires exactly one pose")
-        if self.kind in ("menu", "trigger", "aim"):
-            if self.hand is None or (self.hand == "both" and self.kind != "trigger"):
+        if self.kind in ("menu", "trigger", "fist", "open_hand", "aim"):
+            if self.hand is None or (
+                self.hand == "both" and self.kind not in ("trigger", "fist", "open_hand")
+            ):
                 raise ValueError("invalid hand for this command")
         elif self.hand is not None:
             raise ValueError("unexpected hand")
@@ -149,6 +153,8 @@ def submit_body_goal(owner, goal, now):
 
 
 def pulse_controls(kind: str) -> Controls:
+    if kind in ("fist", "open_hand"):
+        return Controls(curls=(1.0 if kind == "fist" else 0.0,) * 5)
     if kind == "menu":
         return Controls(buttons=tuple(i == 3 for i in range(18)))
     if kind == "trigger":

@@ -87,6 +87,12 @@ look override is not evidence that a physically constrained pose was learned.
 Manual aiming/view overrides are retained in command files; they are not LLM
 decisions or RL samples with measured contact rewards.
 
+For avatar compatibility checks, `fist` and `open_hand` accept `hand` as `left`,
+`right`, or `both`. They use the same 0.05–0.5 second pulse deadline and session
+freshness checks. These commands set only skeletal finger curls, leaving buttons,
+triggers and locomotion released. A fist automatically releases after expiry;
+inspect the rendered fingers separately from accepted device input.
+
 ## Learned motion and shutdown
 
 Train a checkpoint with the [CC0 import procedure](full-body.md#cc0-motion-import-and-imitation).
