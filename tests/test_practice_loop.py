@@ -189,6 +189,7 @@ def test_offline_rejected_candidates_never_go_live_and_feedback_reaches_next_rou
     assert result["completed"] and len(calls) == 3
     assert case_counts == [3, 4]
     assert result["selected_actor_sha256"] == original_hash
+    assert len(json.loads(Path(result["selected_cases"]).read_text())) == 5
     assert not any(r["adopted_in_batch"] for r in result["rounds"])
     assert json.loads((loop.out / "frozen-cases.json").read_text()) == json.loads(
         config.cases.read_text()
@@ -262,3 +263,35 @@ def test_admitted_candidates_use_latest_prior_but_keep_original_baseline(tmp_pat
     assert len(set(trial_actors)) == 3
     assert config.tasks.read_bytes() == original_tasks
     assert result["selected_prior"] == str(selected[-1])
+
+
+@pytest.mark.parametrize("tampered", [False, True])
+def test_new_batch_retains_checkpoint_original_baseline(tmp_path, tampered):
+    config = inputs(tmp_path)
+    original = tmp_path / "original.pt"
+    original.write_bytes(b"original")
+    (config.prior / "candidate-actor.pt").write_bytes(b"previously-adopted")
+    tasks = json.loads(config.tasks.read_text())
+    tasks["actor_sha256"] = digest(config.prior / "candidate-actor.pt")
+    config.tasks.write_text(json.dumps(tasks))
+    (config.prior / "practice-manifest.json").write_text(
+        json.dumps(
+            dict(
+                baseline_actor=str(original),
+                baseline_actor_sha256="a" * 64 if tampered else digest(original),
+            )
+        )
+    )
+    loop = PracticeLoop(config, tmp_path / "new-batch")
+
+    def stop_after_preflight(*args):
+        manifest = json.loads((loop.out / "manifest.json").read_text())
+        assert manifest["baseline_actor"] == str(original)
+        raise RuntimeError("preflight inspected")
+
+    loop.trial = stop_after_preflight
+    with pytest.raises(
+        ValueError if tampered else RuntimeError,
+        match="original baseline changed" if tampered else "preflight inspected",
+    ):
+        loop.run()

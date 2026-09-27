@@ -87,3 +87,9 @@ still needed before claiming human-like behavior or general skill learning.
 Inspect `events.jsonl`, `status.json`, `result.json`, frozen inputs and each round's
 trainer results, live measurements and cleanup evidence. Finite round/update/time
 limits are configurable; no unattended endless model replacement is implied.
+`selected-cases.json` retains the accumulated training starts, including the last
+trial. To continue a **completed** batch, point a new configuration at its selected
+tasks, selected prior and selected cases, then use a new output directory. The
+original actor baseline is inherited from the prior's practice manifest and its
+hash is verified; resuming cannot silently turn an improved candidate into the
+original regression baseline.

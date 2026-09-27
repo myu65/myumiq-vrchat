@@ -156,9 +156,14 @@ class PracticeLoop:
         prior = outside_repo(config.prior)
         if digest(prior / "candidate-actor.pt") != settings.actor_sha256:
             raise ValueError("prior checkpoint differs from tasks")
-        baseline = outside_repo(settings.actor)
-        if digest(baseline) != settings.actor_sha256:
+        configured_actor = outside_repo(settings.actor)
+        if digest(configured_actor) != settings.actor_sha256:
             raise ValueError("configured actor content changed")
+        previous_path = prior / "practice-manifest.json"
+        previous = json.loads(previous_path.read_text("utf-8")) if previous_path.exists() else {}
+        baseline = outside_repo(Path(previous.get("baseline_actor") or configured_actor))
+        if previous.get("baseline_actor_sha256") not in (None, digest(baseline)):
+            raise ValueError("original baseline changed since previous practice")
         corpus = outside_repo(config.reference_corpus)
         champion = self.out / "selected-tasks.json"
         atomic_json(champion, settings.model_dump(mode="json"))
@@ -179,6 +184,8 @@ class PracticeLoop:
         baseline_live, starts = self.trial(self.out / "baseline-live", champion, probes)
         champion_live = baseline_live
         cases = append_training(cases, starts)
+        next_cases = self.out / "selected-cases.json"
+        atomic_json(next_cases, [c.model_dump(mode="json") for c in cases])
         for number in range(1, config.rounds + 1):
             folder = self.out / f"round-{number:02d}"
             folder.mkdir()
@@ -243,6 +250,7 @@ class PracticeLoop:
                 settings, prior, champion_live = candidate_settings, candidate_dir, live
                 atomic_json(champion, settings.model_dump(mode="json"))
             cases = append_training(cases, starts)
+            atomic_json(next_cases, [c.model_dump(mode="json") for c in cases])
             result = dict(
                 round=number,
                 updates=trained["updates"],
@@ -262,6 +270,7 @@ class PracticeLoop:
             completed=True,
             rounds=self.rounds,
             selected_tasks=str(champion),
+            selected_cases=str(next_cases),
             selected_prior=str(prior),
             selected_actor_sha256=settings.actor_sha256,
             normal_settings_modified=False,
