@@ -18,6 +18,21 @@ from .osc import DeviceOutput, LiveConfig, MockOutput
 from .vmt import LifecycleError, SafetyConfig, State, StopPolicy, VMTBackend
 
 
+def trajectory_wire(command):
+    """Bound JSON size without truncating the horizon (at most 0.5 nm error)."""
+
+    def compact(value):
+        if isinstance(value, float):
+            return round(value, 9)
+        if isinstance(value, list):
+            return [compact(item) for item in value]
+        if isinstance(value, dict):
+            return {key: compact(item) for key, item in value.items()}
+        return value
+
+    return compact(command.model_dump(mode="json"))
+
+
 def _worker(config_json, safety, token, ready, stop, failed, log_path):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
@@ -272,7 +287,7 @@ class OutputSupervisor:
         if target is not None:
             packet["target"] = target.model_dump(mode="json")
         if trajectory is not None:
-            packet["trajectory"] = trajectory.model_dump(mode="json")
+            packet["trajectory"] = trajectory_wire(trajectory)
         self._sequence += 1
         data = json.dumps(packet, allow_nan=False, separators=(",", ":")).encode()
         if len(data) > 32768:

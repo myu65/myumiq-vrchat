@@ -100,6 +100,41 @@ def test_servo_checks_the_emitted_floor_not_just_knots():
         servo.sample(1.0)
 
 
+def test_full_precision_twelve_knot_horizon_fits_wire_and_preserves_motion():
+    from myumiq_vrchat.backends.supervisor import trajectory_wire
+
+    pose, command = trajectory()
+    state = command.origin.state()
+    rng = np.random.default_rng(76)
+    samples = []
+    for i in range(12):
+        state, _, _, _ = command.rig.advance(
+            state, rng.uniform(-0.5, 0.5, command.rig.action_size), 0.04
+        )
+        samples.append(JointSample.from_knot(MotionKnot(600000 + i * 0.04, state, np.zeros(66))))
+    command = command.model_copy(update={"knots": tuple(samples)})
+    packet = dict(
+        kind="trajectory",
+        token="a" * 64,
+        sequence=123456789,
+        timestamp=600000.123456789,
+        target=pose.model_dump(mode="json"),
+        trajectory=trajectory_wire(command),
+    )
+    data = json.dumps(packet, allow_nan=False, separators=(",", ":"))
+    assert len(data.encode()) <= 32768
+    restored = JointTrajectory.model_validate_json(json.dumps(json.loads(data)["trajectory"]))
+    assert len(restored.knots) == 12
+    for before, after in zip(command.knots, restored.knots):
+        assert after.time == pytest.approx(before.time, abs=1e-9)
+        np.testing.assert_allclose(
+            vector(command.rig.forward(before.state())),
+            vector(restored.rig.forward(after.state())),
+            atol=1e-7,
+            rtol=0,
+        )
+
+
 def test_horizon_rejects_excessive_duration_and_future_start():
     pose, command = trajectory()
     bad = command.model_dump(mode="json")

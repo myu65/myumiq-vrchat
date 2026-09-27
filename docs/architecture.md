@@ -182,6 +182,10 @@ The supervisor uses nonblocking IPC and its own timed deadline, avoiding socket
 receive timeout granularity as a servo clock. Compact once-per-second timing
 records expose actual frame counts, maximum gaps and compose/send/receive costs;
 the configured frequency alone is not evidence of the achieved output cadence.
+Trajectory JSON uses nine decimal places for numeric values to keep full horizons
+within the existing 32 KiB IPC limit. Coordinates have at most 0.5 nm rounding
+error; quaternions, joint limits and the emitted floor are still validated by the
+receiver. No knots are dropped and the producer lease timestamp is unchanged.
 
 The motor now samples a local 30 Hz locomotion controller on its existing clock.
 Continuous navigation refreshes short leases without pulse/settle gaps. Velocity

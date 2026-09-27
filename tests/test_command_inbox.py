@@ -131,10 +131,10 @@ def test_disk_pause_longer_than_output_lease_keeps_real_supervisor_active(tmp_pa
             session=session,
         )
     )
-    states = [
-        json.loads(line)["state"]
-        for line in (session / "output-events.jsonl").read_text().splitlines()
+    events = [
+        json.loads(line) for line in (session / "output-events.jsonl").read_text().splitlines()
     ]
+    states = [event["state"] for event in events if "state" in event]
     assert stalled.is_set() and states == ["waiting", "active", "closed"]
     result = json.loads((session / "result.json").read_text())
     assert result["error"] is None and result["cleanup_errors"] == []
