@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -156,9 +157,11 @@ def test_llm_outage_keeps_drives_running_and_records_explicit_fallback(tmp_path)
         assert agent.health["llm"]["state"] == "degraded"
         assert agent.health["voice"]["state"] == "pending_configuration"
         assert agent.error is None
-        assert (tmp_path / "decisions.jsonl").exists()
     finally:
         agent.close()
+    # The choice is published before its audit write; join the writer first.
+    decisions = (tmp_path / "decisions.jsonl").read_text("utf-8").splitlines()
+    assert any(json.loads(row)["source"] == "drive_fallback" for row in decisions)
     assert (tmp_path / "memory.json").exists()
 
 
