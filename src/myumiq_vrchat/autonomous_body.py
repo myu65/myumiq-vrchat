@@ -592,6 +592,8 @@ class AutonomousBody:
                 # and cause repeated planning/restarts on a missed camera frame.
                 if not self.exploration_visual_pause or self.exploration_visual_pause[0] != key:
                     self.exploration_visual_pause = (key, now)
+                    if getattr(self.learned_motor.settings, "execution_mode", None) == "buffered":
+                        self.learned_motor.controller.end_goal()
                 self.intent_metadata["body_state"] = "holding_without_exploration_image"
                 self.intent_metadata["execution"] = self.action_timing(now)
                 self.goal = BodyGoal(

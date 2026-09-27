@@ -34,6 +34,16 @@ def test_autonomous_planner_waits_for_llm_then_replans(monkeypatch):
     assert "最近の経験" in requests[-1]
 
 
+def test_solitary_movement_does_not_satisfy_social_desire():
+    drives = Drives()
+    for _ in range(20):
+        drives.advance(1, interacting=False, moving=True, observing=True)
+    assert drives.social_desire > 0.55 and drives.fatigue > 0
+    before = drives.fatigue
+    drives.advance(1, interacting=True, moving=False)
+    assert drives.fatigue < before
+
+
 def test_drive_bounds_and_device_reward_provenance():
     drives = Drives()
     for _ in range(1000):

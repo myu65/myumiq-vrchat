@@ -149,6 +149,7 @@ def test_independent_decision_runs_learned_body_during_pending_dialogue(monkeypa
         "myumiq_vrchat.articulated_tasks.ArticulatedController", lambda *a, **kw: control
     )
     settings = ArticulatedTasks(
+        execution_mode="feedback",
         actor=tmp_path / "actor.pt",
         actor_sha256="b" * 64,
         rig_sha256=hashlib.sha256(control.rig.model_dump_json().encode()).hexdigest(),
@@ -282,6 +283,7 @@ def timed_motor(monkeypatch, tmp_path):
         "myumiq_vrchat.articulated_tasks.ArticulatedController", lambda *a, **kw: control
     )
     settings = ArticulatedTasks(
+        execution_mode="feedback",
         actor=tmp_path / "actor.pt",
         actor_sha256="b" * 64,
         rig_sha256=hashlib.sha256(control.rig.model_dump_json().encode()).hexdigest(),

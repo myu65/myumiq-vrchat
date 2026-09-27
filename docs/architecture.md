@@ -1,5 +1,63 @@
 # Architecture
 
+## Buffered execution and visual continuity (2026-09-27)
+
+The current articulated path uses the existing fitted actor in an optional
+`execution_mode=buffered` adapter (the new task-catalogue default). One bounded
+worker predicts 400 ms of joint motion at 20 Hz. The existing motor samples the
+joint trajectory; constrained joints interpolate in their convex rotation-vector
+envelope, preserving skeleton lengths and the initial measured tracker residual.
+New horizons join at a shared future state. Delayed inference consumes the old
+finite horizon, then holds; it never extrapolates. Goal cancellation invalidates
+pending predictions. Fresh device observations must remain within the recently
+issued per-device trajectory; lost/stalled feedback fails the action.
+
+Predicted horizons are not confirmed training transitions. The prior `feedback`
+mode remains selectable for measured one-step replay acquisition and comparison.
+Task completion still requires observed posture/sequence evidence. Learned motion
+reference phase is checked against actual readback, independently of predictions.
+
+Perception retains the existing capture process and lifecycle. A 20 Hz vision
+worker performs forward/backward Lucas–Kanade tracking while a single bounded
+detector job runs at 2 Hz. A delayed detection is seeded on its original image and
+replayed through a bounded frame history, never restamped as a current detection.
+Lost/ambiguous features withdraw the track. JPEG snapshots are coherent image/world
+pairs at 5 Hz; camera freshness, detector age and tracking diagnostics are separate.
+OpenCV's [tracking API](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
+supplies optical flow; no VLM or detector is placed on the motor clock. Existing
+[PAMIQ concurrency](https://github.com/MLShukai/pamiq-core) and executive ownership
+are retained, with no additional device writer or training scheduler.
+
+Live acceptance must measure actual cadence, Home/controller continuity, autonomous
+plans and local audio output. A successful device readback or screenshot change
+does not establish remote audibility, collision-free navigation or avatar quality.
+
+`VisionConfig.fast_hz` defaults to 20 (null selects the legacy detector-paced
+path); `hz` remains the detector cadence. `ArticulatedTasks.execution_mode` selects
+`buffered` or `feedback`. These do not change the configured model/artifact identity.
+The existing producer samples the joint trajectory; the separate compositor emits
+at 60 Hz. Producer/readback jitter still limits the observed pose update cadence,
+so 60 Hz output alone is not a claim of 60 distinct measured poses per second.
+
+Planner `comment` and TALK proposals enter the existing dialogue generation/output owner with
+an autonomous source, never a fabricated user utterance. Human speech takes
+priority; the default 45-second proactive cooldown and explicit-stop latch apply.
+Both cooldown and enablement are in `DialogueSettings`. The speech model receives
+the current visual snapshot and recent memory instead of directly voicing the
+planner's proposal as an observed fact. Body actions continue independently.
+The optional `comment` is outside the body steps, so an observation can be voiced
+without replacing exploration/rest with a conversation goal. Artificial drives
+separate bodily activity, changed-view observation, and recent speech interaction;
+solitary movement does not satisfy social desire or establish another person's presence.
+
+Body selection uses the same cancellable transport as dialogue. New input clears
+obsolete inference and its backoff; at most two non-cooperative retired adapters
+are retained before applying backpressure. Invalid decisions remain rejected;
+contract failures retry after two seconds, while transport failures keep the
+configured backoff. A successful finite EXPLORE_HOME interval may be followed by
+another exploration decision. One-shot commands remain deduplicated, explicit
+stop remains latched, and every movement still needs fresh Home/camera/output leases.
+
 ## Multi-rate migration (2026-09-26)
 
 The next slice removes body assessment from dialogue's default critical path.
@@ -26,19 +84,17 @@ does not suppress otherwise valid controller input. The state records confirmed
 reference phase, not an independently invented avatar gait measurement.
 No tracking-space root translation is integrated from these demands.
 
-The following migration is still proposed: a 20 Hz actor prepares short horizons
-for an interpolated motion buffer. Fast image tracking
-must have its own capture timestamps and loss handling, independently of 2 Hz
-detection and event-driven semantic vision. No new PAMIQ scheduler, replay store
-or direct VMT writer is introduced. Controller root movement remains separate
-from tracking-space body offsets. Rate targets are configuration and acceptance
-criteria, not claims of measured real-time performance.
+The actor horizon and fast tracking slice above implements the subsequent migration.
+Semantic vision still follows the configured planner/selection refresh as well as
+new events; fully event-driven semantic scheduling remains future work. Controller
+root movement remains separate from tracking-space body offsets. Rate targets are
+configuration and acceptance criteria, not claims of measured real-time performance.
 
 CPU fixtures first cover stalled body inference, cancelled HTTP requests,
 sentence ordering/barge-in, input persistence and goal continuity. Later output
 and tracking slices require their own deterministic tests before live acceptance.
-Current continuous movement still uses finite goal deadlines and low-rate camera
-freshness; it is not yet target following or a horizon-based actor. Smooth versus
+Current continuous movement still uses finite goal deadlines and camera freshness;
+it is not target following or metric navigation. Smooth versus
 snap turning depends on the deployed VRChat binding; normalized yaw input does not
 change that setting or establish a physical angular velocity.
 

@@ -202,7 +202,14 @@ if __name__ == "__main__":
     )
     messages = receive_until(vmt, 3.5)
     assert process.wait(timeout=3) == 17
-    events = [json.loads(x) for x in log_path.read_text().splitlines()]
+    # Spawn time varies under concurrent rendering/training. The orphan's
+    # bounded cleanup starts at its watchdog expiry, not at Popen above.
+    deadline = time.perf_counter() + 3
+    while True:
+        events = [json.loads(x) for x in log_path.read_text().splitlines()]
+        if events[-1].get("state") == "closed" or time.perf_counter() >= deadline:
+            break
+        time.sleep(0.02)
     assert any(x.get("state") == "active" for x in events)
     assert any(x.get("state") == "timed_out" for x in events)
     assert events[-1]["state"] == "closed"

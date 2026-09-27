@@ -121,6 +121,7 @@ class PurposeRunner:
         self.assessment_followup = None
         self.goal_context_revision = 0
         self.latest_audio_input = None
+        self.last_proactive_at = -float("inf")
         self.cancel_training = Event()
         self.goal = self.goal_id = None
         self.origin = "local_llm"
@@ -800,6 +801,8 @@ class PurposeRunner:
             owner.health["llm"] = {"state": "planning", "model": owner.config.llm.model}
 
     def close(self):
+        if self.body_decision:
+            self.body_decision.close()
         self._discard_stream("shutdown")
         self.dialogue_generation.cancel()
         self.dialogue_generation.close()
@@ -985,7 +988,46 @@ class PurposeRunner:
             self.services.voice.pipeline.output.stop()
         self.shared.save()
 
+    def queue_autonomous_dialogue(self, purpose, now):
+        """A thought may request speech, independently of the current body goal."""
+        settings = self.owner.config.dialogue
+        requested = ([purpose.comment] if purpose.comment else []) + [
+            s.speech for s in purpose.steps if s.capability == "TALK" and s.speech
+        ]
+        if (
+            not requested
+            or not settings.proactive_speech
+            or not self.owner.enabled
+            or self.services.voice is None
+            or now < self.listening_until
+            or self.utterances
+            or self.dialogue_pending
+            or self.reply_pending
+            or now - self.last_proactive_at < settings.proactive_interval_s
+            or self.body_decision
+            and self.body_decision.stop_latched
+        ):
+            return False
+        self.last_proactive_at = now
+        intention = dict(purpose=purpose.description, proposal=requested[0], source="planner")
+        episode = self.shared.episode("speech_intention", intention)
+        self.utterances.append(
+            dict(
+                episode_id=episode,
+                partner=None,
+                autonomous=True,
+                expires_at=now + 20,
+                text=json.dumps(intention, ensure_ascii=False),
+            )
+        )
+        self.emit("autonomous_speech_requested", episode_id=episode, **intention)
+        return True
+
     def _input_is_current(self, heard):
+        if heard.get("autonomous"):
+            return time.perf_counter() < heard["expires_at"] and not (
+                self.body_decision and self.body_decision.stop_latched
+            )
         captured = heard.get("input")
         if captured is None:
             return True  # Existing text/operator sources have no audio session.
@@ -1075,6 +1117,7 @@ class PurposeRunner:
                 self.dialogue_wait = (heard["episode_id"], now)
             if (
                 settings.await_body_assessment
+                and not heard.get("autonomous")
                 and selection
                 and selection.understand_requests
                 and (not assessment or assessment["utterance_id"] != heard["episode_id"])
@@ -1145,6 +1188,7 @@ class PurposeRunner:
                         capabilities=capabilities,
                         action_context=action_context,
                         **({"on_text": stream.feed} if stream else {}),
+                        **({"autonomous": True} if heard.get("autonomous") else {}),
                     )
                 ),
                 "dialogue",
@@ -1295,7 +1339,18 @@ def run_purposes(owner):
                 and owner.action_timing(now)["phase"] == "running"
                 and owner.choice[2].skill not in ("WAIT", "SIT", "LIE")
             )
-            owner.drives.advance(min(1, now - previous), interacting=active)
+            # Moving alone is not a conversation. Otherwise autonomous walking
+            # continually satisfies social desire without any speech occurring.
+            observation = owner.health.get("exploration", {}).get("last") or {}
+            seen = observation.get("timestamp", -float("inf"))
+            owner.drives.advance(
+                min(1, now - previous),
+                interacting=owner.enabled and now < runner.listening_until,
+                moving=active,
+                observing=owner.enabled
+                and 0 <= now - seen < 1.5
+                and observation.get("outcome") == "changed_view",
+            )
             previous = now
             for event in events:
                 if not owner.enabled:

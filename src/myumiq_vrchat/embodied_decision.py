@@ -143,7 +143,7 @@ def score(settings, request):
             scorer.close()
 
 
-def evaluate(settings, request):
+def evaluate(settings, request, session=None):
     if settings.selection is None:
         return score(settings, request)
     import time
@@ -158,6 +158,7 @@ def evaluate(settings, request):
         allow_state_only=profile.allow_state_only,
         use_image=profile.use_image,
         understand_requests=profile.understand_requests,
+        session=session,
     ).choose(request)
     chosen = result.select(request, time.perf_counter(), settings.max_age_s)
     report = result.model_dump(mode="json")
@@ -191,6 +192,24 @@ class EmbodiedDecision:
         self.stop_latched = False
         self.stopped_utterance = None
         self.retry_after = 0.0
+        self.generation_session = None
+        self.retired = []
+
+    def _preempt(self):
+        if self.pending:
+            self.retired.append((self.pending[0], self.generation_session))
+            if self.generation_session:
+                self.generation_session.cancel()
+                self.generation_session.close()
+            self.pending = self.generation_session = None
+            self.runner.emit("body_decision_preempted")
+
+    def close(self):
+        self._preempt()
+        for _, session in self.retired:
+            if session:
+                session.cancel()
+                session.close()
 
     def clear_body_request(self):
         self.maintained_posture = None
@@ -230,8 +249,10 @@ class EmbodiedDecision:
         return candidate_id(intent) not in self.attempted
 
     def conversation_changed(self):
+        self._preempt()
         self.context_epoch += 1
         self.next_request = 0.0
+        self.retry_after = 0.0
 
     def _observe_changes(self):
         runner = self.runner
@@ -257,6 +278,11 @@ class EmbodiedDecision:
 
     def _completed_in_context(self, chosen, epoch):
         runner, owner = self.runner, self.runner.owner
+        # Exploration is an ongoing activity made of finite safe leases. Its
+        # previous lease succeeding must not mark the entire activity fulfilled.
+        # Explicit directed moves and one-shot gestures keep deduplication.
+        if chosen.intent.get("skill") == "EXPLORE_HOME":
+            return False
         last = runner.history[-1] if runner.history else {}
         action = last.get("action") or {}
         evidence = last.get("evidence") or {}
@@ -305,7 +331,12 @@ class EmbodiedDecision:
             "fallback": "current_finite_action_then_pose_hold",
         }
         self.runner.emit("body_decision_failed", error=str(exc)[:200])
-        self.next_request = now + self.runner.settings.retry_s
+        delay = (
+            min(2.0, self.runner.settings.retry_s)
+            if isinstance(exc, ValueError)
+            else self.runner.settings.retry_s
+        )
+        self.next_request = now + delay
         self.retry_after = self.next_request
 
     def assess_request(self, report, utterance_id, now):
@@ -359,6 +390,7 @@ class EmbodiedDecision:
         from .purpose_runtime import action_summary, background, body_summary
 
         runner, owner = self.runner, self.runner.owner
+        self.retired = [(future, session) for future, session in self.retired if not future.done()]
         if runner.running:
             runner._observe_step(now)
         self._observe_changes()
@@ -367,6 +399,9 @@ class EmbodiedDecision:
             if not future.done():
                 return
             self.pending = None
+            if self.generation_session:
+                self.generation_session.close()
+                self.generation_session = None
             if (
                 generation != owner.generation
                 or epoch != self.context_epoch
@@ -536,6 +571,12 @@ class EmbodiedDecision:
                     self._failed(now, exc)
         if now < max(self.next_request, self.retry_after):
             return
+        if len(self.retired) >= 2:
+            owner.health["decision"] = {
+                "state": "waiting_adapter_cancellation",
+                "role": "body_owner",
+            }
+            return
         context = runner.shared.context()
         from .visual_context import visual_context
 
@@ -658,8 +699,19 @@ class EmbodiedDecision:
             image_available=image is not None,
             image_error=image_error,
         )
+        if owner.config.decision.selection is not None:
+            from .generation import GenerationSession
+
+            self.generation_session = GenerationSession(owner.config.decision.selection.llm)
+        session = self.generation_session
         self.pending = (
-            background(lambda: evaluate(owner.config.decision, request)),
+            background(
+                lambda: (
+                    evaluate(owner.config.decision, request, session)
+                    if session is not None
+                    else evaluate(owner.config.decision, request)
+                )
+            ),
             owner.generation,
             self.context_epoch,
             self.stimulus_epoch,

@@ -30,6 +30,7 @@ class ArticulatedTasks(Frozen):
     motions: dict[str, MotionReference] = Field(default_factory=dict, max_length=32)
     facing: bool = False
     motion_anchor: Literal["session", "current"] = "session"
+    execution_mode: Literal["buffered", "feedback"] = "buffered"
 
     @model_validator(mode="after")
     def validate_goals(self):
@@ -117,6 +118,10 @@ class ArticulatedIntentMotor:
             self.controller.close()
             raise ValueError("articulated task catalogue does not match its actor and rig")
         self.policy_id = "articulated:" + self.settings.actor_sha256[:16]
+        if self.settings.execution_mode == "buffered":
+            from .buffered_actor import BufferedActor
+
+            self.controller = BufferedActor(self.controller)
         self.key = self.pose_goal = None
         self.active = False
         self.learning_metadata = None
@@ -159,6 +164,8 @@ class ArticulatedIntentMotor:
             "feedback_contract": "per_tracker_relative_confirmation_v4",
             "heading_contract": "forward_or_lateral_projection_v2",
         }
+        if self.settings.execution_mode == "buffered":
+            fitting["feedback_contract"] = "observed_buffered_trajectory_v1"
         if self.controller.rig.joint_limits:
             fitting.update(
                 fitting_contract="joint_envelope_tracker_objective_v3",
@@ -345,6 +352,21 @@ class ArticulatedIntentMotor:
                 )
                 self.pose_goal = self.playback.target()
         previous = self.controller.previous.copy()
+        if self.settings.execution_mode == "buffered":
+            import copy
+
+            reference = copy.copy(self.playback) if self.playback else None
+            speed = self.locomotion_state.gait_speed_scale if self.locomotion_state else 1.0
+            self.controller.reference = (
+                (
+                    lambda at: reference.target(
+                        reference.phase
+                        + max(0, at - now) * reference.rate * speed / reference.model.duration_s
+                    )
+                )
+                if reference
+                else None
+            )
         deadline = now + intent.duration_s if starting else self.execution.deadline
         action_dt = min(dt, deadline - now)
         action, obs, rates = self.controller.step(
@@ -352,6 +374,8 @@ class ArticulatedIntentMotor:
         )
         if self.controller.error:
             return self._finish(current, self.controller.error)
+        if starting and getattr(self.controller, "started", False):
+            self.execution = replace(self.execution, started_at=now, deadline=deadline)
         if obs is not None:
             if starting:
                 self.execution = replace(self.execution, started_at=now, deadline=deadline)

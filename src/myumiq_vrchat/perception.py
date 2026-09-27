@@ -12,6 +12,7 @@ class SpatialDetection:
     confidence: float
     kind: str = "unknown"
     image_position: tuple[float, float] | None = None
+    image_box: tuple[float, float, float, float] | None = None
 
 
 class TemporalWorldTracker:

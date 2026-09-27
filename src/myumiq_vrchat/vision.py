@@ -106,6 +106,7 @@ class VisionConfig(BaseModel):
     target_name: str = Field(default="calibration-target", min_length=1, max_length=80)
     window_title: str = Field(default="VRChat", min_length=1, max_length=100)
     hz: float = Field(default=2.0, ge=0.2, le=10)
+    fast_hz: float | None = Field(default=20.0, ge=10, le=30)
     confidence: float = Field(default=0.35, gt=0, lt=1)
     labels: tuple[str, ...] = COCO_LABELS
     player_labels: tuple[str, ...] = ("person",)
@@ -164,6 +165,7 @@ class TemplateTargetDetector:
                 confidence=min(1.0, score),
                 kind="object",
                 image_position=offset,
+                image_box=(x / width, y / height, (x + tw) / width, (y + th) / height),
             )
         ]
 
@@ -317,6 +319,12 @@ class YoloOnnxDetector:
                         max(-1.0, min(1.0, 2 * cx / width - 1)),
                         max(-1.0, min(1.0, 2 * cy / height - 1)),
                     ),
+                    image_box=(
+                        max(0, (x - xpad) / scale / width),
+                        max(0, (y - ypad) / scale / height),
+                        min(1, (x + bw - xpad) / scale / width),
+                        min(1, (y + bh - ypad) / scale / height),
+                    ),
                 )
             )
         self._centres.update(new_centres)
@@ -350,10 +358,16 @@ class LiveVisionLoop:
         title: str = "VRChat",
         hz: float = 2.0,
         capture_backend: str = "desktop",
+        fast_hz: float | None = None,
     ):
         if not 0.2 <= hz <= 10:
             raise ValueError("vision rate must be 0.2..10 Hz")
         self.detector, self.title, self.hz = detector, title, hz
+        if fast_hz is not None and not 10 <= fast_hz <= 30:
+            raise ValueError("fast tracking rate must be 10..30 Hz")
+        self.fast_hz = fast_hz
+        self.tracking_health = {}
+        self._image_world = None
         if capture_backend not in ("desktop", "windows_graphics"):
             raise ValueError("unknown capture backend")
         self.capture_backend = capture_backend
@@ -373,6 +387,11 @@ class LiveVisionLoop:
         self._thread.start()
 
     def _work(self) -> None:
+        if self.fast_hz is not None:
+            from .vision_multirate import run
+
+            run(self)
+            return
         if self.capture_backend == "windows_graphics":
             self._window_work()
             return
@@ -448,7 +467,7 @@ class LiveVisionLoop:
         if self.error is not None:
             raise RuntimeError("vision loop unavailable")
         with self._lock:
-            world, encoded = self._world, self._decision_image
+            world, encoded = self._image_world or self._world, self._decision_image
         if encoded is None or world.timestamp is None:
             raise RuntimeError("no decision image yet")
         return world, encoded, world.timestamp

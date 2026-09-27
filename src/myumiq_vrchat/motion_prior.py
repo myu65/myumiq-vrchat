@@ -131,8 +131,8 @@ class MotionPlayback:
         self.first_confirmed_pose = None
         self.movement = 0.0
 
-    def target(self):
-        points = vector(self.model.sample(self.phase))
+    def target(self, phase=None):
+        points = vector(self.model.sample(self.phase if phase is None else phase))
         for row in points:
             row[:3] = np.asarray(rotate(self.rotation, tuple(row[:3]))) + self.offset
             row[3:] = qmul(self.rotation, tuple(row[3:]))

@@ -16,6 +16,21 @@ Optional [private Home exploration](exploration.md) adds EXPLORE_HOME with fresh
 visual feedback, expiring controller input and a private-world gate.
 Configured optional services are attempted, not silently treated as verified.
 
+The primary articulated purpose/decision path additionally supports:
+
+- `articulated_tasks.execution_mode`: `buffered` (default) or `feedback`, set in
+  the referenced task catalogue. Buffered execution holds a short predicted
+  joint trajectory while verifying fresh device feedback.
+- `fast_hz` in the referenced vision JSON: 20 by default, independently of detector
+  `hz` (2 by default). Null selects the older detector-paced path.
+- `dialogue.proactive_speech` (default true) and `proactive_interval_s` (45 seconds).
+  A planner's optional `comment`, or a TALK step, requests speech without changing
+  the current body action. `dialogue.use_image` controls visual input to speech.
+
+See [multi-rate implementation boundaries](architecture.md#buffered-execution-and-visual-continuity-2026-09-27)
+for cancellation, continuous exploration and observation limits. The legacy flow
+below remains available, but does not gain all primary-path features automatically.
+
 ## Flow
 
 Low-rate local vision and streaming voice feed WorldState and speech events.

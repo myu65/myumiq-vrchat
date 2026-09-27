@@ -16,21 +16,26 @@ class Drives:
     social_desire: float = 0.55
     fatigue: float = 0.0
 
-    def advance(self, seconds: float, *, interacting: bool) -> None:
+    def advance(
+        self,
+        seconds: float,
+        *,
+        interacting: bool,
+        moving: bool | None = None,
+        observing: bool = False,
+    ) -> None:
         if not 0 <= seconds <= 1:
             raise ValueError("drive update interval outside 0..1s")
-        self.boredom = min(
-            1.0, max(0.0, self.boredom + seconds * (-0.08 if interacting else 0.015))
-        )
+        moving = interacting if moving is None else moving
+        occupied = interacting or moving or observing
+        self.boredom = min(1.0, max(0.0, self.boredom + seconds * (-0.08 if occupied else 0.015)))
         self.curiosity = min(
-            1.0, max(0.0, self.curiosity + seconds * (0.005 if not interacting else -0.03))
+            1.0, max(0.0, self.curiosity + seconds * (-0.03 if observing else 0.005))
         )
         self.social_desire = min(
             1.0, max(0.0, self.social_desire + seconds * (0.003 if not interacting else -0.04))
         )
-        self.fatigue = min(
-            1.0, max(0.0, self.fatigue + seconds * (0.015 if interacting else -0.02))
-        )
+        self.fatigue = min(1.0, max(0.0, self.fatigue + seconds * (0.015 if moving else -0.02)))
 
 
 @dataclass

@@ -46,7 +46,16 @@ def test_stream_bounds_and_final_prefix_validation():
 
 
 @pytest.mark.parametrize(
-    "text", ["止まって", "ちょっと止まって！", "停止してください", "動かないで"]
+    "text",
+    [
+        "止まって",
+        "ちょっと止まって！",
+        "停止してください",
+        "動かないで",
+        "そこでとどまって。",
+        "その場で止まって",
+        "そこで留まってね",
+    ],
 )
 def test_unambiguous_stop(text):
     assert is_immediate_stop(text)
@@ -59,6 +68,8 @@ def test_unambiguous_stop(text):
         "「止まって」と言ったらどうなる？",
         "止まっている人は誰？",
         "ストップウォッチ",
+        "そこでとどまっている人は誰？",
+        "とどまってほしくない",
         "こんにちは",
     ],
 )

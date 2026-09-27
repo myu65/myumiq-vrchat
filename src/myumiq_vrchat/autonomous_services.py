@@ -72,7 +72,11 @@ class Services:
         cfg = VisionConfig.model_validate_json(self.config.vision.read_text("utf-8-sig"))
         detector = make_detector(cfg)
         return LiveVisionLoop(
-            detector, title=cfg.window_title, hz=cfg.hz, capture_backend=cfg.capture_backend
+            detector,
+            title=cfg.window_title,
+            hz=cfg.hz,
+            capture_backend=cfg.capture_backend,
+            fast_hz=cfg.fast_hz,
         )
 
     def _voice(self):
@@ -166,6 +170,7 @@ class Services:
                         "frames": component.frames,
                         "startup_s": self._startup_s.get(name),
                         "semantic_accuracy": "pending_verification",
+                        "tracking": getattr(component, "tracking_health", {}),
                     }
                     if getattr(component, "capture_pending", None):
                         self.health[name].update(state="pending", error=component.capture_pending)

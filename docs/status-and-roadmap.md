@@ -20,6 +20,15 @@ floor/actuator bounds. Research and the remaining learning gap are documented in
 - Purpose-mode dialogue starts independently of body assessment, cancels obsolete
   HTTP streams, and submits sentences through the existing audio owner. Ordinary
   speech preserves navigation; unambiguous stop requests are handled locally.
+- Planner comments can request a short spontaneous utterance through the same
+  dialogue/TTS path, with a configurable cooldown. They preserve the body goal,
+  remain distinct from heard user input and yield to human speech.
+- Buffered articulated execution predicts a finite joint trajectory without
+  waiting for each tracker packet. Fresh trajectory readback remains a safety
+  gate; predictions are excluded from confirmed device training transitions.
+- Fast local optical flow tracks image features between detector updates. Camera,
+  detector and target-track freshness are separate. Uncertain or lost features
+  withdraw their targets instead of fabricating fresh detections.
 - The existing output process composes separately leased pose, locomotion and hand
   input at nominal 60 Hz. Its repeated frames cannot renew stale producer evidence.
 - Normal navigation uses continuous short leases and a 30 Hz local acceleration
@@ -63,10 +72,10 @@ floor/actuator bounds. Research and the remaining learning gap are documented in
 
 ## Not complete
 
-- 20 Hz actor rollout, short motion horizons, buffered interpolation/blending,
-  and fast visual tracking independent of detection/semantic latency. Current
-  actor reference advancement still uses confirmed readback, and navigation still
-  uses the existing camera freshness gate. CPU/UDP tests do not prove avatar behavior.
+- General navigation and target following: buffered 20 Hz actor horizons and fast
+  local tracking are implemented, but do not supply metric depth, collision checks,
+  or verified person identity. See the architecture's 2026-09-27 implementation
+  boundary. CPU/UDP tests do not prove avatar behavior.
 - Stable person identity, depth, world localization and contact observation.
 - Reliable transitions across arbitrary poses and metric navigation. Learned
   whole-body transitions exist, but supported poses and bounded Home exploration

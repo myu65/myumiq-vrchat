@@ -177,6 +177,7 @@ def main(argv=None):
                     title=vision_config.window_title,
                     hz=vision_config.hz,
                     capture_backend=vision_config.capture_backend,
+                    fast_hz=vision_config.fast_hz,
                 )
             voice = None
             if args.voice_config:

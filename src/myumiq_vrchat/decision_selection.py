@@ -58,11 +58,13 @@ class LocalSelection:
         allow_state_only=False,
         use_image=False,
         understand_requests=False,
+        session=None,
     ):
         self.config = config
         self.allow_state_only = allow_state_only
         self.use_image = use_image
         self.understand_requests = understand_requests
+        self.session = session
 
     def choose(self, request):
         image_used = self.use_image and request.image_base64 is not None
@@ -82,7 +84,9 @@ class LocalSelection:
         }
         targets = sorted({c.intent["target"] for c in request.candidates if c.intent.get("target")})
         capability_state = {
-            c["name"]: c.get("available", False) for c in request.state.get("capabilities", [])
+            c["name"]: c.get("available", False)
+            for c in request.state.get("capabilities", [])
+            if c["name"] != "TALK"
         }
         if self.understand_requests:
             assessment = {
@@ -149,6 +153,7 @@ class LocalSelection:
             instruction += (
                 "\n最優先: 最新のuserの意図を、候補を選ぶ前にrequested_capabilitiesへ分解する。"
                 "できない要求も省略しない。雑談や純粋な質問だけなら[]。"
+                "TALKは別の会話系が担当するのでrequested_capabilitiesには入れない。"
                 "「ついてきて」「ついてこれる？」はFOLLOWでありMOVE_FORWARDではない。"
                 "FOLLOWがavailable=falseならunsupported、candidate_id=null。"
                 "「座ったままうつ伏せ」はSITとLIE。片方でも未対応ならunsupported。"
@@ -178,15 +183,17 @@ class LocalSelection:
                     },
                 },
             ]
-        response = _request(
-            self.config,
-            [
-                {"role": "system", "content": instruction},
-                {"role": "user", "content": content},
-            ],
-            schema,
-            "body_selection",
-            360 if image_used or self.understand_requests else 80,
+        messages = [
+            {"role": "system", "content": instruction},
+            {"role": "user", "content": content},
+        ]
+        tokens = 360 if image_used or self.understand_requests else 80
+        # Use the same cancellable transport as dialogue, without exposing
+        # incomplete structured decisions to the body executive.
+        response = (
+            self.session.request_stream(messages, schema, "body_selection", tokens, lambda _: None)
+            if self.session is not None
+            else _request(self.config, messages, schema, "body_selection", tokens)
         )
         value, elapsed = response
         if (
@@ -267,7 +274,10 @@ class LocalSelection:
                 and skill is not None
                 and value["basis"] != "latest_utterance"
             ):
-                raise ValueError("request assessment conflicts with the selected action")
+                raise ValueError(
+                    "request assessment conflicts with the selected action: "
+                    f"status={status}, required={required}, skill={skill}, basis={value['basis']}"
+                )
         return SelectionResult(
             backend="local_selection"
             if self.config.adapter == "local_chat"

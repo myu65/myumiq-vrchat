@@ -4,7 +4,8 @@
 入力継続性、姿勢保持、経験からの候補学習の実装と、残る複合BodyGoal・自動採用を区別しています。
 会話の並列化・一文単位の音声送信、60Hzの出力合成、30Hzの連続移動への変更は
 [多周期構成への移行](docs/architecture.md#multi-rate-migration-2026-09-26)を参照。
-actorの先読み・MotionBuffer・高速視覚追跡と実機での受入確認は残っています。
+actorの400ms先読み・MotionBuffer・検出から独立した高速視覚追跡も実装しました。
+[実行境界と受入条件](docs/architecture.md#buffered-execution-and-visual-continuity-2026-09-27)を参照。
 視界を使う会話と行動判断、要求の採否、停止の保持は
 [視界・会話・行動の接続](docs/visual-conversation-actions.md)を参照。
 
@@ -52,8 +53,9 @@ see also [the full-body contract](docs/full-body.md).
 An optional articulated actor now follows learned full-body motion sequences as
 well as configured static postures. The executive can acquire a configured CC0
 motion example, validate and register its prior, and restore it after restart.
-Periodic and finite references share feedback-paced execution and retain the
-observed stopping posture. Configured lessons can be discovered and learned
+Periodic and finite references use buffered joint trajectories by default and
+retain the observed stopping posture. The selectable `feedback` mode remains
+available for confirmed one-step replay acquisition. Configured lessons can be discovered and learned
 without waiting for conversation. Per-lesson glTF/GLB sources and explicit
 cross-skeleton retarget profiles support additional gestures. This is bounded
 imitation acquisition; arbitrary motion invention and online task RL remain future

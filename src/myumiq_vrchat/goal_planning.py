@@ -63,6 +63,8 @@ class GoalPlanning:
                 if purpose.focus and purpose.criterion in ("observe_target", "interaction"):
                     owner.world.locate(purpose.focus)
                 runner.shared.propose_goal(purpose)
+                if purpose.comment or any(step.capability == "TALK" for step in purpose.steps):
+                    runner.queue_autonomous_dialogue(purpose, now)
                 runner.emit(
                     "planner_proposal",
                     purpose=purpose.model_dump(mode="json"),

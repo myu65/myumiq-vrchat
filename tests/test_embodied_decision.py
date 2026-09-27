@@ -24,6 +24,51 @@ class Services:
         raise AssertionError("speech is deliberately pending")
 
 
+@pytest.mark.parametrize("independent_comment", [False, True])
+def test_planned_speech_uses_dialogue_without_forging_input_or_replacing_body(
+    runtime, monkeypatch, independent_comment
+):
+    from myumiq_vrchat.purposes import Purpose, SkillRequest
+    from myumiq_vrchat.shared_dialogue import Dialogue
+
+    owner, runner, jobs = runtime
+    runner.services.voice = object()
+    owner.config = owner.config.model_copy(
+        update={"dialogue": DialogueSettings(stream_sentences=False)}
+    )
+    now = time.perf_counter()
+    purpose = Purpose(
+        description="周りの景色を話す",
+        reason="新しい眺め",
+        success_description="一言話す",
+        steps=(SkillRequest(capability="WAIT"),)
+        if independent_comment
+        else (SkillRequest(capability="TALK", speech="明るい場所だね。"),),
+        comment="明るい場所だね。" if independent_comment else "",
+    )
+    original = owner.choice
+    called = []
+
+    def respond(*args, **kwargs):
+        called.append(kwargs.get("autonomous"))
+        return Dialogue(reply="ここは明るいね。", topic="景色")
+
+    monkeypatch.setattr("myumiq_vrchat.shared_dialogue.request_dialogue", respond)
+    spoken = []
+    monkeypatch.setattr(runner.services, "reply", lambda text, at: spoken.append(text) or True)
+    assert runner.queue_autonomous_dialogue(purpose, now)
+    assert not runner.queue_autonomous_dialogue(purpose, now + 1)
+    assert not runner.shared.working["turns"]
+    runner._dialogue_tick(now)
+    jobs[-1][0].set_result(jobs[-1][1]())
+    runner._dialogue_tick(now + 0.1)
+    assert called == [True] and spoken == ["ここは明るいね。"]
+    assert owner.choice == original
+    assert all(turn["role"] == "assistant" for turn in runner.shared.working["turns"])
+    runner.body_decision.stop_latched = True
+    assert not runner.queue_autonomous_dialogue(purpose, now + 60)
+
+
 @pytest.mark.parametrize("text", ["今日は暑いね", "何が見える？", "手を振って"])
 def test_default_dialogue_starts_without_body_assessment(runtime, monkeypatch, text):
     from myumiq_vrchat.shared_dialogue import Dialogue
@@ -147,14 +192,16 @@ def test_voice_attention_preserves_navigation_but_explicit_stop_is_immediate(run
     runner.epoch = owner.generation
     lease = owner.exploration_lease = (owner.generation, now + 0.15, "forward")
     choice = owner.choice
-    runner.body_decision.pending = (Future(), owner.generation, 0, 0, None)
+    pending = Future()
+    runner.body_decision.pending = (pending, owner.generation, 0, 0, None)
     for kind in ("speech_started", "speech_active", "partial_transcript", "utterance"):
         runner.on_event(RuntimeEvent(kind, now, text="こんにちは"), now)
         assert owner.choice == choice and owner.exploration_lease == lease
     runner.on_event(RuntimeEvent("utterance", now + 0.1, text="止まって"), now + 0.1)
     assert owner.choice[2].skill == "WAIT" and owner.exploration_lease is None
     assert runner.body_decision.stop_latched
-    assert not runner.body_decision.pending[0].done()  # Stop did not await the model.
+    assert not pending.done()  # Stop did not await the old model.
+    assert runner.body_decision.pending is None
 
 
 def test_explicit_stop_survives_chat_and_requires_new_executable_request(runtime, monkeypatch):
@@ -1055,3 +1102,63 @@ def test_pending_ack_gets_one_grounded_followup_only_for_current_input(
         assert spoken[-1] == "今はついていけないよ。"
         assert len(spoken) == 2 and runner.assessment_followup is None
         assert sum(t["role"] == "user" for t in runner.shared.working["turns"]) == 1
+
+
+def test_new_body_request_preempts_obsolete_inference_and_backoff(runtime, monkeypatch):
+    owner, runner, jobs = runtime
+    now = time.perf_counter()
+    monkeypatch.setattr("myumiq_vrchat.embodied_decision.score", lambda s, r: result(r, "WAVE"))
+    decision = runner.body_decision
+    decision.tick(now)
+    old = jobs[0][0]
+    decision.retry_after = now + 50
+    decision.conversation_changed()
+    decision.tick(now + 0.1)
+    assert len(jobs) == 2 and not old.done()
+    jobs[1][0].set_result(jobs[1][1]())
+    decision.tick(now + 0.2)
+    assert owner.choice[2].skill == "WAVE"
+    old.set_result(jobs[0][1]())
+    generation = owner.generation
+    decision.tick(now + 0.3)
+    assert owner.generation == generation and not decision.retired
+
+
+def test_noncooperative_body_adapters_have_bounded_cancelled_work(runtime):
+    _, runner, jobs = runtime
+    decision = runner.body_decision
+    now = time.perf_counter()
+    for index in range(6):
+        decision.conversation_changed()
+        decision.tick(now + index * 0.1)
+    assert len(jobs) == 2 and len(decision.retired) == 2
+    jobs[0][0].set_exception(RuntimeError("obsolete"))
+    decision.tick(now + 1)
+    assert len(jobs) == 3
+
+
+@pytest.mark.parametrize(
+    "skill,completed", [("EXPLORE_HOME", False), ("MOVE_FORWARD", True), ("WAVE", True)]
+)
+def test_autonomous_exploration_can_renew_but_one_shot_actions_stay_deduplicated(
+    runtime, skill, completed
+):
+    from myumiq_vrchat.decision import Candidate
+
+    owner, runner, _ = runtime
+    decision = runner.body_decision
+    chosen = Candidate(id="body_" + skill, description=skill, intent={"skill": skill})
+    runner.history.append(
+        dict(
+            status="plan_completed",
+            evidence={"success": True},
+            action={
+                "candidate_id": chosen.id,
+                "conversation_epoch": decision.context_epoch,
+                "decision_stimulus_epoch": decision.stimulus_epoch,
+                "intent_generation": owner.choice[0],
+                "target_geometry": None,
+            },
+        )
+    )
+    assert decision._completed_in_context(chosen, decision.context_epoch) is completed
