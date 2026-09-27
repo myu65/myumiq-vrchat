@@ -14,7 +14,7 @@ from pydantic import Field, model_validator
 from .agent_memory import AgentMemory
 from .autonomy import Drives
 from .body import Frozen, Number
-from .capabilities import CapabilityRegistry
+from .capabilities import CapabilityRegistry, posture_capability
 from .capability_learning import LearningSettings, make_task, restore_candidate, train_task
 from .exploration import NAVIGATION_SKILLS
 from .generation import GenerationSession
@@ -177,6 +177,10 @@ class PurposeRunner:
         self.save()
 
     def _install_motion(self, name, model, report):
+        if posture_capability(name):
+            raise ValueError(
+                "posture references require actor transition/recovery validation and explicit configuration"
+            )
         if self.owner.learned_motor:
             from .motion_prior import MotionReference
 
@@ -412,6 +416,20 @@ class PurposeRunner:
                     self.owner.health["real_experience_rl"] = dict(
                         state=task["status"], scope=report["scope"], live_promoted=False
                     )
+                    self.emit("learning_result", task=task)
+                    self.save()
+                    return
+                if posture_capability(task["capability"]):
+                    # Reference interpolation alone cannot admit an out-of-distribution
+                    # posture to a running actor. Keep it for explicit actor evaluation.
+                    task.update(
+                        status="candidate_pending_validation",
+                        result=report,
+                        blockers=["actor_transition_recovery_validation_required"],
+                    )
+                    self.registry.get(task["capability"]).status = "awaiting_actor_validation"
+                    if self.goal is not None and self.goal_id == task["goal_id"]:
+                        self.finish("blocked_candidate_validation", task["blockers"])
                     self.emit("learning_result", task=task)
                     self.save()
                     return

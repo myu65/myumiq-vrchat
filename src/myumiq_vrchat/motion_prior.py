@@ -95,7 +95,7 @@ def validate_motion(model, floor):
             np.abs(points[:, :2]).max() > 1.5
             or points[:, 2].max() > 2.3
             or points[:, 2].min() < -0.2
-            or points[9:, 2].min() < floor
+            or points[:, 2].min() < floor
         ):
             raise ValueError("learned motion exceeds its workspace or declared floor")
 

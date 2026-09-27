@@ -30,6 +30,11 @@ def preserve_observed_residual(before, after, observed):
     )
 
 
+def nonfoot_floor_penalty(trackers, reference_floor, margin=0.02):
+    """Clearance objective for lying/reaching, where the feet may not be lowest."""
+    return torch.relu(reference_floor + margin - trackers[:, :9, 2]).amax(1)
+
+
 class ExperienceRefinementTrainer(TorchTrainer):
     def __init__(
         self,
@@ -43,6 +48,7 @@ class ExperienceRefinementTrainer(TorchTrainer):
         anchor_weight=0.05,
         floor_weight=50.0,
         reference_rehearsal=False,
+        whole_body_floor=False,
     ):
         if not 1 <= updates <= 1000 or not 1 <= horizon <= 8 or not 1 <= batch_size <= 64:
             raise ValueError("invalid bounded replay refinement budget")
@@ -57,6 +63,7 @@ class ExperienceRefinementTrainer(TorchTrainer):
         if reference_rehearsal and batch_size < 2:
             raise ValueError("reference rehearsal requires a mixed batch")
         self.reference_rehearsal = reference_rehearsal
+        self.whole_body_floor = whole_body_floor
         self.objective = dict(
             reference_floor=reference_floor,
             floor_weight=floor_weight,
@@ -149,6 +156,12 @@ class ExperienceRefinementTrainer(TorchTrainer):
                     ).values()
                 )
                 reward = reward - self.anchor_weight * (action - anchored).square().mean(1)
+                if self.whole_body_floor and self.objective["reference_floor"] is not None:
+                    # Lying/reaching tasks can put hands or head below the feet.
+                    # This adds non-foot clearance to the existing foot objective.
+                    reward = reward - self.objective["floor_weight"] * nonfoot_floor_penalty(
+                        after, self.objective["reference_floor"]
+                    )
                 objective = objective + 0.99**step * reward
                 current, previous = after, rates
             loss = -objective.mean()

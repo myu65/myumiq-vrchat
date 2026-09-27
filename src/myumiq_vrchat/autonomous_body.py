@@ -47,7 +47,7 @@ class Intent(Frozen):
             "TURN_LEFT",
             "TURN_RIGHT",
         ]
-        | Annotated[str, StringConstraints(pattern=r"^MOTION_[A-Z][A-Z0-9_]{0,39}$")]
+        | Annotated[str, StringConstraints(pattern=r"^(?:MOTION|POSTURE)_[A-Z][A-Z0-9_]{0,39}$")]
     )
     duration_s: Number = Field(default=5, ge=1, le=20)
     hand: Literal["left", "right"] | None = None

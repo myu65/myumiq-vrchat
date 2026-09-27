@@ -25,6 +25,7 @@ from myumiq_vrchat.articulated_policy import AnchoredSACPolicy
 from myumiq_vrchat.experience_refinement import (
     ExperienceRefinementTrainer,
     eligible_candidate,
+    nonfoot_floor_penalty,
     preserve_observed_residual,
     reference_starts,
 )
@@ -158,7 +159,8 @@ def test_reference_evaluation_holds_completed_static_goals_and_restarts_settling
 
 
 @pytest.mark.parametrize("rehearsal", [False, True])
-def test_pamiq_candidate_updates_are_isolated_and_budgeted(tmp_path, rehearsal):
+@pytest.mark.parametrize("whole_body_floor", [False, True])
+def test_pamiq_candidate_updates_are_isolated_and_budgeted(tmp_path, rehearsal, whole_body_floor):
     torch.set_num_threads(1)
     torch.manual_seed(43)
     rig, states = fixture()
@@ -184,7 +186,12 @@ def test_pamiq_candidate_updates_are_isolated_and_budgeted(tmp_path, rehearsal):
         {"candidate": TorchTrainingModel(model.actor, has_inference_model=False)}
     )
     trainer = ExperienceRefinementTrainer(
-        rig, updates=2, horizon=1, batch_size=2, reference_rehearsal=rehearsal
+        rig,
+        updates=2,
+        horizon=1,
+        batch_size=2,
+        reference_rehearsal=rehearsal,
+        whole_body_floor=whole_body_floor,
     )
     trainer.attach_training_models(models)
     buffers = {"experience": buffer}
@@ -224,6 +231,18 @@ def test_pamiq_candidate_updates_are_isolated_and_budgeted(tmp_path, rehearsal):
         require_disjoint_sessions([case], [replace(case, action="train:2")])
     require_disjoint_sessions([case], [replace(case, session="heldout")])
     env.close()
+
+
+def test_nonfoot_clearance_detects_and_trains_low_hand_with_feet_clear():
+    trackers = torch.zeros(2, 11, 7)
+    trackers[:, :, 2] = 0.1
+    trackers[0, 3, 2] = -0.03
+    trackers.requires_grad_()
+    penalty = nonfoot_floor_penalty(trackers, 0.0)
+    torch.testing.assert_close(penalty, torch.tensor([0.05, 0.0]))
+    penalty.sum().backward()
+    assert trackers.grad[0, 3, 2] < 0  # descent pushes the low hand upward
+    assert trackers.grad[:, 9:, :].abs().sum() == 0  # separate foot objective
 
 
 @pytest.mark.parametrize(

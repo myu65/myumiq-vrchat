@@ -185,7 +185,8 @@ class GltfMotion:
         ids = {part: self.names[name] for part, name in QUATERNIUS.items()}
         scale = head_height / float(reference[ids["head"]][1, 3])
         frames = []
-        for time_s in np.arange(0, self.duration(clip) + 1e-6, 1 / hz):
+        duration = self.duration(clip)
+        for time_s in np.unique(np.append(np.arange(0, duration, 1 / hz), duration)):
             world = self.world_matrices(clip, float(time_s))
             poses = {}
             for part, index in ids.items():

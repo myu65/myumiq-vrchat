@@ -71,6 +71,17 @@ def test_open_goal_and_missing_capability_are_not_arbitrary_actuation():
         SkillRequest(capability="powershell.exe")
 
 
+def test_posture_learning_requires_finite_transitions_and_reverse_preserves_kind():
+    from myumiq_vrchat.capability_learning import MotionLesson
+
+    with pytest.raises(ValueError, match="finite transition"):
+        LearningSettings(motions={"POSTURE_PRONE": MotionLesson(clip="Prone")})
+    with pytest.raises(ValueError, match="reverse requires"):
+        MotionLesson(clip="Prone", reverse=True)
+    lesson = MotionLesson(clip="Recover", kind="finite", reverse=True)
+    assert LearningSettings(motions={"POSTURE_PRONE": lesson}).lesson("POSTURE_PRONE") == lesson
+
+
 def test_handshake_missing_prerequisites_never_executes_reach_prefix():
     registry = CapabilityRegistry()
     world = WorldState(
@@ -84,6 +95,14 @@ def test_handshake_missing_prerequisites_never_executes_reach_prefix():
     assert "CONTACT_FEEDBACK" in result.blockers
     task = make_task("HANDSHAKE", "g", registry, LearningSettings())
     assert task["status"] == "blocked" and task["method"] == "imitation"
+
+
+def test_pat_head_requires_partner_metric_pose_and_outcome_beyond_a_reach_target():
+    registry = CapabilityRegistry()
+    world = WorldState(objects=(WorldObject(name="head", position=(0.3, 0, 1.3), source="vision"),))
+    result = registry.resolve(purpose({"capability": "PAT_HEAD", "target": "head"}), world)
+    assert not result.actions and "PAT_HEAD" in result.missing
+    assert {"TARGET_IDENTITY", "TARGET_HEAD_POSE", "CONTACT_FEEDBACK"} <= set(result.blockers)
 
 
 def test_composition_availability_tracks_nested_dependencies_and_adapter_replacement():

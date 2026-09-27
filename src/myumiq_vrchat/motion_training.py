@@ -12,6 +12,13 @@ from myumiq_vrchat.motion_prior import FiniteImitation
 from myumiq_vrchat.whole_body import PeriodicImitation, vector
 
 
+def reverse_frames(frames, duration):
+    """Reverse a demonstration's full pose sequence, retaining its time spacing."""
+    if not frames or abs(frames[0][0]) > 1e-6 or abs(frames[-1][0] - duration) > 1e-5:
+        raise ValueError("reversal requires both demonstrated endpoints")
+    return [(float(duration - stamp), target) for stamp, target in reversed(frames)]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gltf", type=Path)
@@ -22,6 +29,7 @@ def main():
     parser.add_argument("--kind", choices=("periodic", "finite"), default="periodic")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--retarget", type=Path, help="explicit cross-skeleton reference profile")
+    parser.add_argument("--reverse", action="store_true", help="reverse the demonstrated sequence")
     args = parser.parse_args()
     license_text = args.license.read_text(encoding="utf-8")
     if "CC0" not in license_text:
@@ -36,6 +44,10 @@ def main():
     else:
         frames = motion.retarget(args.clip, hz=60)
     duration = motion.duration(args.clip)
+    if args.reverse:
+        if args.kind != "finite":
+            raise ValueError("reversed recovery references must be finite")
+        frames = reverse_frames(frames, duration)
     # Interleaved held-out times measure interpolation of this clip, NOT transfer
     # to other motions/avatars. Exclude duplicate periodic endpoint from training.
     if args.kind == "finite":
@@ -82,6 +94,7 @@ def main():
         "train_frames": len(train),
         "heldout_frames": len(heldout),
         "kind": args.kind,
+        "reversed": args.reverse,
         "method": ("Fourier" if args.kind == "periodic" else "Gaussian basis")
         + " phase-conditioned ridge behavior cloning",
         "position_mean_cm": float(np.mean(position_errors) * 100),

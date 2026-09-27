@@ -1,5 +1,43 @@
 # Architecture
 
+## Posture and interaction learning slice (2026-09-27)
+
+This slice keeps speech and a requested whole-body posture independent.
+Named `POSTURE_*` references use the existing actor and capability catalogue,
+with a finite transition and a held endpoint. They are configuration, not separate
+per-limb procedural controllers. Existing CROUCH/STAND contracts remain compatible.
+A conversation-only assessment must never grant authority to replace a held posture.
+
+Implementation and acceptance order:
+
+1. Cover crouch + speech + interruption + explicit stand in the existing executive;
+   retain the posture until an explicit supported body request replaces it.
+2. Import a licensed prone transition and recovery if a suitable source exists;
+   train finite references and evaluate the actual actor, floor and joint bounds
+   before enabling a new posture in a live catalogue. A reference fitting well is
+   not evidence that the body actor can execute it. Keep rejected candidates.
+3. Establish target-relative interaction evidence for patting: dated metric target,
+   coordinate frame, target identity, loss handling and observed task outcome.
+   Image boxes/directions must not masquerade as metric head positions or contact.
+   Test unavailable/expired evidence without a participant. Human-target execution
+   remains unavailable until those prerequisites have an observed implementation.
+4. Compare existing posture/gesture behavior, then perform a bounded owned-Home
+   crouch/conversation trial. Add prone to live trials only after offline acceptance.
+
+Learning uses the existing bounded capability worker and PAMIQ training path.
+Models and licensed motion assets stay outside the repository. Actor changes and
+reference changes are reported separately; no arbitrary online RL is claimed.
+Implemented: conversation-only/unsupported assessments retain the body goal;
+static named postures and finite endpoint-holding references share the actor;
+reference training can reverse finite demonstrations with both endpoints present.
+Automatically learned posture references remain `candidate_pending_validation`;
+neither worker completion nor restart installs them into a live actor. Admission
+requires offline actor transition/recovery checks and explicit configuration.
+The posture diagnostic checks fitted starts and all tracker heights, while both
+feedback and buffered actuation reject all-tracker floor crossings (including
+interpolated output). These tests do not measure avatar collision or contact.
+See [posture learning](posture-learning.md) for executable checks and remaining work.
+
 ## Buffered execution and visual continuity (2026-09-27)
 
 The current articulated path uses the existing fitted actor in an optional

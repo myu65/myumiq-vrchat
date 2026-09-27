@@ -48,6 +48,15 @@ def controller(monkeypatch, tmp_path):
     )
 
 
+def low_hand_state(rig, state):
+    # Turn the complete skeleton onto its side: hand is lower than either foot.
+    rotations = state.rotations.copy()
+    rotations[0] = (np.sqrt(0.5), np.sqrt(0.5), 0, 0)
+    root = state.root.copy()
+    root[2] += 0.005 - vector(rig.forward(JointState(root, rotations)))[:, 2].min()
+    return JointState(root, rotations)
+
+
 def test_fitting_holds_measured_pose_and_zero_action_does_not_publish_the_fit(
     monkeypatch, tmp_path
 ):
@@ -116,9 +125,14 @@ def test_cancelled_old_fit_timeout_cannot_fail_a_replacement_goal(monkeypatch, t
     assert control.error == "articulated fitting timed out"
 
 
-def test_floor_rejection_keeps_current_pose_and_reports_unavailable(monkeypatch, tmp_path):
+@pytest.mark.parametrize("lowest", ["feet", "hand"])
+def test_floor_rejection_keeps_current_pose_and_reports_unavailable(monkeypatch, tmp_path, lowest):
     control, states, jobs = controller(monkeypatch, tmp_path)
-    state = JointState(states[0].root + [0, 0, -0.095], states[0].rotations)
+    state = JointState(
+        states[0].root + [0, 0, -0.095 if lowest == "feet" else 0], states[0].rotations
+    )
+    if lowest == "hand":
+        state = low_hand_state(control.rig, state)
     current = control.rig.forward(state)
     body = simulated_body(current, 1.0)
     control.observe(body, 1.0)
@@ -131,8 +145,10 @@ def test_floor_rejection_keeps_current_pose_and_reports_unavailable(monkeypatch,
     assert not control.ready and "reference floor" in control.status()["error"]
     np.testing.assert_array_equal(control.previous, np.zeros(66))
     rejected = control.status()["rejected_step"]
-    assert rejected["proposed_minimum_foot_height_m"] < rejected["reference_floor_m"]
-    assert rejected["observed_minimum_foot_height_m"] >= rejected["reference_floor_m"]
+    assert rejected["proposed_minimum_tracker_height_m"] < rejected["reference_floor_m"]
+    assert rejected["observed_minimum_tracker_height_m"] >= rejected["reference_floor_m"]
+    if lowest == "hand":
+        assert rejected["proposed_minimum_foot_height_m"] >= rejected["reference_floor_m"]
     assert rejected["sent"] is False and rejected["integration_dt_s"] == 0.1
     control.new_goal()
     assert control.status()["rejected_step"] is None

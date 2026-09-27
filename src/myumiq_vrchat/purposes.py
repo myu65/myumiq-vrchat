@@ -63,7 +63,7 @@ def purpose_schema(world, capabilities=()):
         "TURN_LEFT",
         "TURN_RIGHT",
         "NEW_ABILITY",
-    ) + tuple(c["name"] for c in capabilities if c["name"].startswith("MOTION_")):
+    ) + tuple(c["name"] for c in capabilities if c["name"].startswith(("MOTION_", "POSTURE_"))):
         targets = calibrated if capability in ("REACH", "HOLD_HAND") else names
         needs_target = capability in ("LOOK_AT", "REACH", "HOLD_HAND")
         if (needs_target or capability == "EXPLORE") and not targets:
@@ -126,6 +126,7 @@ def request_purpose(
         "探索の結果や未確認の場所はshared_memoryのexplorationにある。移動距離や壁の位置は未計測。"
         "available=falseの能力は学習課題になる。WALK_IN_PLACEは教師から習得できる。"
         "MOTION_で始まる配置済みの動作も、descriptionの実演から未習得なら学習を提案できる。"
+        "POSTURE_は説明された全身姿勢への移行と保持。会話だけではその姿勢を解除しない。"
         "HANDSHAKE/PAT_HEAD/APPROACHやNEW_から始まる新能力も提案できるが、前提能力がなければ実行は保留。"
         "失敗や保留を履歴で確認し、状況が変わらなければ別の目的を選ぶ。"
         "REACH/HOLD_HANDは校正済み対象のみ。人物、接触、疲労を捏造しない。"

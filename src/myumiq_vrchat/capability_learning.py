@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .body import Frozen, Number
-from .capabilities import motion_capability
+from .capabilities import motion_capability, posture_capability
 from .replay_learning_job import ReplayRefinementSettings
 
 
@@ -26,6 +26,13 @@ class MotionLesson(Frozen):
     license: Path | None = None
     source_url: str | None = None
     retarget: Path | None = None
+    reverse: bool = False
+
+    @model_validator(mode="after")
+    def finite_reverse(self):
+        if self.reverse and self.kind != "finite":
+            raise ValueError("reverse requires a finite lesson")
+        return self
 
 
 class LearningSettings(Frozen):
@@ -45,6 +52,8 @@ class LearningSettings(Frozen):
         for name, lesson in self.motions.items():
             if (name == "WAVE") != (lesson.hand is not None):
                 raise ValueError("only a WAVE lesson must declare its demonstrated hand")
+            if posture_capability(name) and lesson.kind != "finite":
+                raise ValueError("posture lessons require a finite transition")
         return self
 
     def lesson(self, capability):
@@ -133,6 +142,8 @@ def train_task(task, settings, output, cancel=None):
     ]
     if lesson.retarget:
         command += ["--retarget", str(lesson.retarget)]
+    if lesson.reverse:
+        command.append("--reverse")
     # Fixed trainer, argument list and operator-owned assets. No shell/code from goals.
     with subprocess.Popen(
         command,
@@ -165,7 +176,7 @@ def train_task(task, settings, output, cancel=None):
 
     model = load_motion((output / "policy.json").read_text("utf-8"))
     # Finite normalized full-body targets and a conservative workspace before activation.
-    for i in range(32):
+    for i in range(33):
         target = model.sample(i / 32)
         for part in (
             "head",

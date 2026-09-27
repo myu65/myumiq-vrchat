@@ -4,12 +4,12 @@ import pytest
 
 pytest.importorskip("torch")
 pytest.importorskip("gymnasium")
-from test_articulated_controller import controller
+from test_articulated_controller import controller, low_hand_state
 
 from myumiq_vrchat.body import simulated_body
 from myumiq_vrchat.buffered_actor import BufferedActor
 from myumiq_vrchat.motion_buffer import MotionBuffer, MotionKnot, blend_state
-from myumiq_vrchat.whole_body import vector
+from myumiq_vrchat.whole_body import target_from_vector, vector
 
 
 def prepared(monkeypatch, tmp_path):
@@ -86,3 +86,25 @@ def test_feedback_loss_and_divergence_stop_the_buffer(monkeypatch, tmp_path):
     control.step(simulated_body(pose, 1.05), pose, 0.01)
     assert not control.observe(simulated_body(pose, 1), 1.6)
     assert "fresh device feedback" in control.error
+
+
+@pytest.mark.parametrize("stage", ["planning", "interpolation"])
+def test_buffer_rejects_hand_floor_crossing_with_feet_above_floor(monkeypatch, tmp_path, stage):
+    control, pose, jobs = prepared(monkeypatch, tmp_path)
+    control.base.state = low_hand_state(control.rig, control.state)
+    pose = control.rig.forward(control.state)
+    control.base.expected = pose
+    control.base.actor.action[:] = 0
+    control.base.actor.action[2] = -1
+    control.observe(simulated_body(pose, 1), 1)
+    held, _, _ = control.step(simulated_body(pose, 1), pose, 0.01)
+    if stage == "planning":
+        with pytest.raises(ValueError, match="tracking floor"):
+            jobs[0][1]()
+    else:
+        # Interpolated samples need their own check, even if planner knots passed.
+        points = vector(pose)
+        points[3, 2] = -0.01
+        monkeypatch.setattr(control.buffer, "pose", lambda state: target_from_vector(points))
+        held, _, _ = control.step(simulated_body(pose, 1), pose, 0.01)
+        assert held == pose and "tracking floor" in control.error

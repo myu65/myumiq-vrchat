@@ -6,7 +6,14 @@ from dataclasses import asdict, dataclass, field
 
 def motion_capability(name):
     return name in ("WAVE", "WALK_IN_PLACE") or bool(
-        re.fullmatch(r"MOTION_[A-Z][A-Z0-9_]{0,39}", name)
+        re.fullmatch(r"(?:MOTION|POSTURE)_[A-Z][A-Z0-9_]{0,39}", name)
+    )
+
+
+def posture_capability(name):
+    """A persistent whole-body endpoint, distinct from a cyclic gesture."""
+    return name in ("STAND", "CROUCH", "SIT", "LIE", "RETURN_TO_REST") or bool(
+        re.fullmatch(r"POSTURE_[A-Z][A-Z0-9_]{0,39}", name)
     )
 
 
@@ -127,7 +134,17 @@ class CapabilityRegistry:
                 "imitation",
                 ("REACH", "HOLD_HAND", "GRASP", "CONTACT_FEEDBACK", "PARTNER_CONSENT"),
             ),
-            ("PAT_HEAD", "reference_free_rl", ("REACH", "CONTACT_FEEDBACK", "PARTNER_CONSENT")),
+            (
+                "PAT_HEAD",
+                "reference_free_rl",
+                (
+                    "TARGET_IDENTITY",
+                    "TARGET_HEAD_POSE",
+                    "REACH",
+                    "CONTACT_FEEDBACK",
+                    "PARTNER_CONSENT",
+                ),
+            ),
         ):
             self.items[name] = Capability(name, False, method=method, prerequisites=prerequisites)
         self.seen = {}

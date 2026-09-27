@@ -110,7 +110,7 @@ class BufferedActor:
             target = buffer.pose(following)
             if (
                 self.base.reference_floor is not None
-                and vector(target)[9:, 2].min() < self.base.reference_floor
+                and vector(target)[:, 2].min() < self.base.reference_floor
             ):
                 raise ValueError("buffered candidate crossed the declared tracking floor")
             knots.append(MotionKnot(at + dt, following, rates))
@@ -154,6 +154,12 @@ class BufferedActor:
                 self.next_submit = now + 0.05
         knot = self.buffer.sample(now)
         action = self.buffer.pose(knot.state)
+        if (
+            self.base.reference_floor is not None
+            and vector(action)[:, 2].min() < self.base.reference_floor
+        ):
+            self.base.error = "interpolated candidate crossed the declared tracking floor"
+            return current, None, None
         if len(self.buffer.knots) > 1 and now >= self.buffer.knots[0].time:
             self.started = True
         if now - self.buffer.knots[-1].time > 0.5:

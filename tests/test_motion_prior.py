@@ -56,6 +56,19 @@ def test_finite_prior_preserves_distinct_boundaries_and_loads(tmp_path):
         reference.load(-0.2)
 
 
+def test_reverse_transition_retains_irregular_timing_and_endpoint_hold():
+    from myumiq_vrchat.motion_training import reverse_frames
+
+    original = model()
+    frames = [(t, original.sample(t)) for t in (0.0, 0.1, 0.7, 1.0)]
+    reversed_frames = reverse_frames(frames, 1.0)
+    np.testing.assert_allclose([t for t, _ in reversed_frames], [0, 0.3, 0.9, 1])
+    assert reversed_frames[0][1] == frames[-1][1]
+    assert reversed_frames[-1][1] == frames[0][1]
+    with pytest.raises(ValueError, match="endpoints"):
+        reverse_frames(frames[:-1], 1.0)
+
+
 def test_anchor_is_shared_across_sequence_and_tracking_translation_is_retained():
     motion = model()
     initial = motion.sample(0)

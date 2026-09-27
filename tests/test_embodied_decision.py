@@ -888,6 +888,22 @@ def test_requested_posture_survives_outcome_and_chat_until_new_body_request(runt
     assert runner.body_decision.maintained_posture is None
 
 
+@pytest.mark.parametrize("held_skill", ["CROUCH", "POSTURE_PRONE"])
+@pytest.mark.parametrize("status", ["none", "unsupported", "clarify"])
+def test_conversation_classification_cannot_unlock_posture(runtime, held_skill, status):
+    owner, runner, _ = runtime
+    decision = runner.body_decision
+    decision.maintained_posture = {"skill": held_skill, "utterance_id": "posture-request"}
+    decision.handled_request = "posture-request"
+    # Even an inconsistent latest_utterance basis is not a new body command.
+    report = {"basis": "latest_utterance", "request_status": status}
+    assert decision._request_conflict(Intent(skill="STAND"), report, "chat") == (True, False)
+    assert decision._request_conflict(Intent(skill="WAIT"), report, "chat") == (False, False)
+    assert decision._request_conflict(
+        Intent(skill="STAND"), {**report, "request_status": "action"}, "stand-request"
+    ) == (False, True)
+
+
 @pytest.mark.parametrize("choice", ["body_CROUCH", None])
 def test_selection_owns_body_without_scores_or_chat_fallback(runtime, monkeypatch, choice):
     owner, runner, jobs = runtime

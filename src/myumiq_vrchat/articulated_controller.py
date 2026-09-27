@@ -208,7 +208,7 @@ class ArticulatedController:
             self.error = str(exc)
             self.previous.fill(0.0)
             return current, None, None
-        if self.reference_floor is not None and vector(action)[9:, 2].min() < self.reference_floor:
+        if self.reference_floor is not None and vector(action)[:, 2].min() < self.reference_floor:
             self.error = "candidate step below declared tracking-space reference floor"
             self.rejected_step = {
                 "reason": "tracking_floor",
@@ -216,6 +216,8 @@ class ArticulatedController:
                 "integration_dt_s": dt,
                 "observed_minimum_foot_height_m": float(vector(current)[9:, 2].min()),
                 "proposed_minimum_foot_height_m": float(vector(action)[9:, 2].min()),
+                "observed_minimum_tracker_height_m": float(vector(current)[:, 2].min()),
+                "proposed_minimum_tracker_height_m": float(vector(action)[:, 2].min()),
                 "reference_floor_m": self.reference_floor,
                 "sent": False,
             }

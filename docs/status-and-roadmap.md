@@ -17,6 +17,10 @@ floor/actuator bounds. Research and the remaining learning gap are documented in
 
 ## Implemented boundaries
 
+- Named posture goals/references share the existing whole-body actor. Ordinary
+  conversation cannot release a held posture. Newly fitted posture references stay
+  pending actor validation; all-tracker floor checks cover proposed and interpolated
+  output. See [posture learning](posture-learning.md) for prone/patting boundaries.
 - Purpose-mode dialogue starts independently of body assessment, cancels obsolete
   HTTP streams, and submits sentences through the existing audio owner. Ordinary
   speech preserves navigation; unambiguous stop requests are handled locally.

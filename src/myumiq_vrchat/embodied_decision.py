@@ -3,6 +3,7 @@
 from dataclasses import asdict
 from hashlib import sha256
 
+from .capabilities import posture_capability
 from .decision import Candidate, DecisionInput, make_scorer
 from .exploration import DIRECTED_MOVEMENT, NAVIGATION_SKILLS
 from .gaze import gaze_targets
@@ -85,7 +86,7 @@ def candidates(registry, world):
         for name in DIRECTED_MOVEMENT
     ]
     for name, item in registry.items.items():
-        if name.startswith("MOTION_"):
+        if name.startswith(("MOTION_", "POSTURE_")):
             requests.append(
                 (
                     item.description or name,
@@ -223,6 +224,7 @@ class EmbodiedDecision:
     def _request_conflict(self, intent, report, utterance_id):
         new_request = (
             report.get("basis") == "latest_utterance"
+            and report.get("request_status") not in ("none", "unsupported", "clarify")
             and utterance_id is not None
             and utterance_id != self.handled_request
         )
@@ -543,15 +545,8 @@ class EmbodiedDecision:
                                     self.handled_request = utterance_id
                                     self.maintained_posture = (
                                         {"skill": intent.skill, "utterance_id": utterance_id}
-                                        if intent.skill
-                                        in (
-                                            "STAND",
-                                            "CROUCH",
-                                            "SIT",
-                                            "LIE",
-                                            "RETURN_TO_REST",
-                                            *DIRECTED_MOVEMENT,
-                                        )
+                                        if posture_capability(intent.skill)
+                                        or intent.skill in DIRECTED_MOVEMENT
                                         else None
                                     )
                                     runner.shared.working["maintained_posture"] = (

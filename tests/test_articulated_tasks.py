@@ -25,6 +25,43 @@ from myumiq_vrchat.purposes import Purpose, SkillRequest
 from myumiq_vrchat.whole_body import target_from_vector, vector
 
 
+def test_custom_posture_uses_existing_actor_catalogue_and_candidates(timed_motor):
+    from myumiq_vrchat.body import WorldState
+    from myumiq_vrchat.capabilities import CapabilityRegistry
+    from myumiq_vrchat.embodied_decision import candidates
+
+    motor, states, _ = timed_motor
+    pose = motor.controller.rig.forward(states[0])
+    motor.settings = motor.settings.model_copy(
+        update={
+            "goals": {"POSTURE_FIXTURE": pose},
+            "descriptions": {"POSTURE_FIXTURE": "試験姿勢を保つ"},
+        }
+    )
+    registry = CapabilityRegistry()
+    motor.configure_registry(registry)
+    assert motor.supports(Intent(skill="POSTURE_FIXTURE"))
+    chosen = next(c for c in candidates(registry, WorldState()) if c.id == "body_POSTURE_FIXTURE")
+    assert chosen.description == "試験姿勢を保つ"
+    assert not registry.is_available("CROUCH")
+
+
+def test_posture_motion_requires_finite_endpoint(timed_motor, tmp_path):
+    from myumiq_vrchat.motion_prior import FiniteImitation, MotionReference
+    from myumiq_vrchat.whole_body import PeriodicImitation
+
+    motor, states, _ = timed_motor
+    pose = motor.controller.rig.forward(states[0])
+    frames = [(float(t), pose) for t in np.linspace(0, 1, 81)]
+    cyclic = PeriodicImitation.fit(frames, 1, "fixture")
+    ref = MotionReference(policy=tmp_path / "unused", sha256="a" * 64)
+    with pytest.raises(ValueError, match="finite transition"):
+        motor.install_motion("POSTURE_FIXTURE", cyclic, ref)
+    finite = FiniteImitation.fit(frames, 1, "fixture")
+    motor.install_motion("POSTURE_FIXTURE", finite, ref)
+    assert motor.supports(Intent(skill="POSTURE_FIXTURE"))
+
+
 def test_acquisition_installs_and_restores_motion_without_replacing_body(
     timed_motor, tmp_path, monkeypatch
 ):
@@ -594,8 +631,9 @@ def test_pulse_test_exploration_waits_for_gait_preparation_and_releases_controll
     assert owner.action_timing(15.1)["phase"] == "expired"
 
 
+@pytest.mark.parametrize("capability", ["MOTION_DANCE", "POSTURE_PRONE"])
 def test_automatic_new_motion_acquisition_does_not_replace_body_choice(
-    timed_motor, tmp_path, monkeypatch
+    timed_motor, tmp_path, monkeypatch, capability
 ):
     from concurrent.futures import Future
 
@@ -616,8 +654,9 @@ def test_automatic_new_motion_acquisition_does_not_replace_body_choice(
                 learning=LearningSettings(
                     acquire_configured_motions=True,
                     motions={
-                        "MOTION_DANCE": MotionLesson(
+                        capability: MotionLesson(
                             clip="Dance",
+                            kind="finite",
                             source=asset,
                             license=license,
                             source_url="https://example.org",
@@ -639,9 +678,9 @@ def test_automatic_new_motion_acquisition_does_not_replace_body_choice(
     choice = owner.choice
     try:
         runner._learning()
-        assert runner.tasks[-1]["capability"] == "MOTION_DANCE"
+        assert runner.tasks[-1]["capability"] == capability
         assert runner.tasks[-1]["status"] == "running"
-        assert not runner.registry.is_available("MOTION_DANCE") and owner.choice == choice
+        assert not runner.registry.is_available(capability) and owner.choice == choice
         motion = FiniteImitation.fit(
             [(float(t), current) for t in np.linspace(0, 1, 32)], 1.0, "Dance"
         )
@@ -660,9 +699,20 @@ def test_automatic_new_motion_acquisition_does_not_replace_body_choice(
             )
         )
         runner._learning()
-        assert runner.tasks[-1]["status"] == "trained"
-        assert runner.registry.is_available("MOTION_DANCE") and owner.choice == choice
-        assert "MOTION_DANCE" in motor.motions and len(runner.tasks) == 1
+        posture = capability == "POSTURE_PRONE"
+        assert runner.tasks[-1]["status"] == (
+            "candidate_pending_validation" if posture else "trained"
+        )
+        assert runner.registry.is_available(capability) is not posture
+        assert (capability in motor.motions) is not posture
+        assert owner.choice == choice and len(runner.tasks) == 1
+        if posture:
+            with pytest.raises(ValueError, match="transition/recovery"):
+                runner._install_motion(capability, motion, runner.tasks[-1]["result"])
+            runner.close()
+            runner = PurposeRunner(owner, Services())
+            assert not runner.registry.is_available(capability)
+            assert runner.tasks[-1]["status"] == "candidate_pending_validation"
     finally:
         runner.close()
 

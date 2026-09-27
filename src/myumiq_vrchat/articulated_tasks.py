@@ -12,7 +12,7 @@ from pydantic import Field, model_validator
 from .articulated_controller import ArticulatedController
 from .body import BodyTarget, Controls, Frozen, Number, WorldState, qmul, rotate
 from .body_facing import BodyFacing
-from .capabilities import motion_capability
+from .capabilities import motion_capability, posture_capability
 from .cli import outside_repo
 from .motion_prior import MotionPlayback, MotionReference, heading, validate_motion
 from .tracker_action import CONTRACT
@@ -26,7 +26,8 @@ class ArticulatedTasks(Frozen):
     actor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     rig_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     reference_floor: Number
-    goals: dict[str, BodyTarget] = Field(min_length=1, max_length=5)
+    goals: dict[str, BodyTarget] = Field(min_length=1, max_length=32)
+    descriptions: dict[str, str] = Field(default_factory=dict, max_length=32)
     motions: dict[str, MotionReference] = Field(default_factory=dict, max_length=32)
     facing: bool = False
     motion_anchor: Literal["session", "current"] = "session"
@@ -34,8 +35,18 @@ class ArticulatedTasks(Frozen):
 
     @model_validator(mode="after")
     def validate_goals(self):
-        if set(self.goals) - {"SIT", "STAND", "CROUCH", "LIE", "RETURN_TO_REST"}:
+        if len(self.goals) + len(self.motions) > 32:
+            raise ValueError("at most 32 configured posture and motion entries combined")
+        if not all(posture_capability(name) for name in self.goals):
             raise ValueError("only named posture goals are currently implemented")
+        if set(self.descriptions) - set(self.goals) or any(
+            not value or len(value) > 80 for value in self.descriptions.values()
+        ):
+            raise ValueError(
+                "posture descriptions must name configured goals and fit 80 characters"
+            )
+        if set(self.goals) & set(self.motions):
+            raise ValueError("a posture must have one static or learned transition definition")
         if not all(motion_capability(name) for name in self.motions):
             raise ValueError("unsupported motion capability")
         for name, motion in self.motions.items():
@@ -48,7 +59,7 @@ class ArticulatedTasks(Frozen):
                 or pose.right.controls != Controls()
             ):
                 raise ValueError("articulated task goals require eleven poses and neutral inputs")
-            if vector(pose)[9:, 2].min() < self.reference_floor:
+            if vector(pose)[:, 2].min() < self.reference_floor:
                 raise ValueError("task goal is below its declared floor")
         return self
 
@@ -138,7 +149,7 @@ class ArticulatedIntentMotor:
         self.settling = None
         try:
             for name, reference in self.settings.motions.items():
-                self.motions[name] = (reference.load(self.settings.reference_floor), reference)
+                self.install_motion(name, reference.load(self.settings.reference_floor), reference)
         except Exception:
             self.controller.close()
             raise
@@ -147,6 +158,13 @@ class ArticulatedIntentMotor:
         if not motion_capability(name) or (name == "WAVE") != (reference.hand is not None):
             raise ValueError("unsupported motion capability or hand")
         validate_motion(model, self.settings.reference_floor)
+        if posture_capability(name):
+            from .motion_prior import FiniteImitation
+
+            if not isinstance(model, FiniteImitation):
+                raise ValueError("a posture requires a finite transition and held endpoint")
+            if name in self.settings.goals:
+                raise ValueError("a static posture definition cannot be replaced by a motion")
         # Replacing a catalogue entry never changes the active playback object.
         self.motions[name] = (model, reference)
 
@@ -202,19 +220,23 @@ class ArticulatedIntentMotor:
         )
 
     def configure_registry(self, registry):
-        for name in set(
-            (
-                "WAVE",
-                "LOOK_AT",
-                "REACH",
-                "RETURN_TO_REST",
-                "CROUCH",
-                "SIT",
-                "LIE",
-                "STAND",
-                "WALK_IN_PLACE",
+        for name in (
+            set(
+                (
+                    "WAVE",
+                    "LOOK_AT",
+                    "REACH",
+                    "RETURN_TO_REST",
+                    "CROUCH",
+                    "SIT",
+                    "LIE",
+                    "STAND",
+                    "WALK_IN_PLACE",
+                )
             )
-        ) | set(self.motions):
+            | set(self.motions)
+            | set(self.settings.goals)
+        ):
             item = registry.get(name)
             item.available = name in self.settings.goals or name in self.motions
             if name == "LOOK_AT" and self.settings.facing:
@@ -227,6 +249,8 @@ class ArticulatedIntentMotor:
             )
             item.method = "imitation" if motion_capability(name) else "articulated_policy"
             item.policy = self.policy_id if item.available else None
+            if name in self.settings.goals:
+                item.description = self.settings.descriptions.get(name, "")
             if name in self.motions:
                 model, reference = self.motions[name]
                 item.supported_hands = (reference.hand,) if reference.hand else None
