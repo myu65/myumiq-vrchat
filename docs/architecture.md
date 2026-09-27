@@ -1565,6 +1565,37 @@ reference hash, playback settings and control contract in failure-condition memo
 so a changed reference does not inherit an unrelated task's execution block.
 # Motion acquisition across skeletons and locomotion
 
+## Bounded local / live practice cycles
+
+An offline coordinator composes the existing condition trainer, frozen reference
+evaluation and an explicitly configured host trial adapter. It is not a motor or
+inference scheduler. Each round trains isolated PAMIQ weights, checks the original
+baseline as well as the current champion, then starts a separate bounded device
+trial with fixed weights. Rejected candidates never replace the champion; its
+next live trial can still supply new training starts. The adapter must finish the
+existing host stop/restoration procedure before the next round begins.
+
+Only training-designated probe starts enter the next round's condition cases.
+Preserve the submitted goal, fresh observed eleven-pose body and trial identity;
+never turn a model-predicted trajectory into device feedback or reuse held-out
+cases for updates. Device path quality and task completion are distinct from
+mirror appearance, contact and naturalness. Persist the selected loop-local task
+profile and every rejection. Normal operator settings are not overwritten.
+
+The first implementation uses a finite CLI batch with stage artifacts and an
+exclusive output directory. Interrupted batches require adapter cleanup before
+a new batch; it does not silently replay a partly completed physical trial.
+Visual review remains explicit evidence and cannot be inferred from tracker
+scores. Automatic adoption inside the batch requires both existing offline
+admission and no regression in matched live probe results.
+
+The implemented modules are `practice_loop` (finite subprocess orchestration)
+and `practice_feedback` (fixed-session replay validation, timed trajectory
+measurement, training-start transfer). Setup and the host adapter contract are
+in [Repeated local and device practice](practice-loop.md).
+
+## Motion sources
+
 Motion lessons may select their own local CC0 source and explicit retarget profile.
 The offline retarget adapter transfers world rotation changes relative to a named
 source reference onto a declared articulated reference pose. Forward kinematics
