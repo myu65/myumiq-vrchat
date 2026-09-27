@@ -182,6 +182,13 @@ of each of three causal joint filters (0 disables them, maximum 0.2 seconds).
 Larger values trade response time for smoothness and must pass the unchanged
 duration and motion admission gates. Explicit holds/stops retire the trajectory
 immediately rather than waiting for the filter to settle.
+An optional `motion_output_filter_s` selects a shorter time constant for moving
+motion references, whose feedback phase clock must keep following the clip.
+When omitted it inherits `output_filter_s`; BODY_GOAL, named static postures and
+motion exits retain the posture filter. A filter changes only at a new measured
+fit/trajectory epoch, never in an active horizon. Task identities record both
+the moving-reference filter and any reserved posture-exit filter. This does not
+extend motion deadlines or relax observed phase/endpoint requirements.
 The supervisor uses nonblocking IPC and its own timed deadline, avoiding socket
 receive timeout granularity as a servo clock. Compact once-per-second timing
 records expose actual frame counts, maximum gaps and compose/send/receive costs;

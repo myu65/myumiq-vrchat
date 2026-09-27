@@ -34,11 +34,14 @@ class ArticulatedTasks(Frozen):
     motion_anchor: Literal["session", "current"] = "session"
     execution_mode: Literal["buffered", "feedback"] = "buffered"
     output_filter_s: Number = Field(default=0.0, ge=0, le=0.2)
+    motion_output_filter_s: Number | None = Field(default=None, ge=0, le=0.2)
     servo_horizon: bool = False
 
     @model_validator(mode="after")
     def validate_goals(self):
-        if self.execution_mode != "buffered" and (self.output_filter_s or self.servo_horizon):
+        if self.execution_mode != "buffered" and (
+            self.output_filter_s or self.motion_output_filter_s is not None or self.servo_horizon
+        ):
             raise ValueError("joint filtering and servo horizons require buffered execution")
         if not (self.goals or self.motions or self.facing or self.condition_goals):
             raise ValueError("configure at least one articulated goal adapter")
@@ -218,7 +221,7 @@ class ArticulatedIntentMotor:
         }
         if self.settings.execution_mode == "buffered":
             fitting["feedback_contract"] = "observed_buffered_trajectory_v1"
-            fitting["output_filter_s"] = self.settings.output_filter_s
+            fitting["output_filter_s"] = self.output_filter_for(intent.skill)
             fitting["servo_horizon"] = self.settings.servo_horizon
         if intent.body_goal is not None:
             fitting["condition_goal_sha256"] = hashlib.sha256(
@@ -252,6 +255,7 @@ class ArticulatedIntentMotor:
             reference = motion[1]
             if reference.exit_goal is not None and intent.skill not in NAVIGATION_SKILLS:
                 identity.update(
+                    exit_output_filter_s=self.settings.output_filter_s,
                     motion_evaluation="observed_sequence_and_exit_v1",
                     exit_goal_sha256=hashlib.sha256(
                         self.settings.goals[reference.exit_goal].model_dump_json().encode()
@@ -269,6 +273,17 @@ class ArticulatedIntentMotor:
             }
             if goal
             else {}
+        )
+
+    def output_filter_for(self, skill):
+        from .exploration import NAVIGATION_SKILLS
+
+        motion = "WALK_IN_PLACE" if skill in NAVIGATION_SKILLS else skill
+        override = self.settings.motion_output_filter_s
+        return (
+            override
+            if motion in self.motions and override is not None
+            else self.settings.output_filter_s
         )
 
     def configure_registry(self, registry):
@@ -336,6 +351,8 @@ class ArticulatedIntentMotor:
         if key != self.key:
             self.hold()
             self.controller.new_goal()
+            if self.settings.execution_mode == "buffered":
+                self.controller.output_filter_s = self.output_filter_for(intent.skill)
             self.key, self.error = key, None
             self.completed_evidence = None
             self.execution = ActionExecution(key, accepted, accepted + 8.0)
@@ -395,6 +412,8 @@ class ArticulatedIntentMotor:
             # Keep the same intent and deadline, but retire every queued gait
             # horizon before fitting the measured pose for the planned endpoint.
             self.controller.new_goal()
+            if self.settings.execution_mode == "buffered":
+                self.controller.output_filter_s = self.settings.output_filter_s
             self.pose_goal = exit_motion.pose
             self.settling = None
             exit_motion.started_at = now

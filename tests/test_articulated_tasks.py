@@ -474,6 +474,58 @@ def configured_cycle(motor, states, tmp_path):
     return current, ref
 
 
+def test_motion_filter_is_selected_at_new_epoch_and_resets_for_posture_exit(timed_motor, tmp_path):
+    from dataclasses import replace
+
+    from myumiq_vrchat.body import BodyCondition, BodyGoal
+    from myumiq_vrchat.buffered_actor import BufferedActor
+
+    motor, states, _ = timed_motor
+    current, _ = configured_cycle(motor, states, tmp_path)
+    motor.settings = motor.settings.model_copy(
+        update={
+            "execution_mode": "buffered",
+            "output_filter_s": 0.15,
+            "motion_output_filter_s": 0.035,
+        }
+    )
+    motor.controller = BufferedActor(motor.controller, output_filter_s=0.15)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=10.0), "test")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    assert motor.controller.output_filter_s == 0.035
+    identity = motor.task_identity(choice[2])
+    assert identity["output_filter_s"] == 0.035 and identity["exit_output_filter_s"] == 0.15
+    epoch = motor.controller.epoch
+    motor.execution = replace(motor.execution, started_at=10.0, deadline=20.0)
+    motor.step(simulated_body(current, 16.0), choice, 16.0, 0.02)
+    assert motor.controller.epoch > epoch and motor.controller.output_filter_s == 0.15
+    assert motor.execution.deadline == 20.0
+    # The override is independent of static/condition goals, including identity.
+    condition = Intent(
+        skill="BODY_GOAL",
+        body_goal=BodyGoal(
+            duration_s=5.0,
+            conditions=(BodyCondition(part="head", frame="current", position=(0.0, 0.0, 0.0)),),
+        ),
+    )
+    before = motor.task_identity(condition)
+    motor.settings = motor.settings.model_copy(update={"motion_output_filter_s": 0.0})
+    assert motor.output_filter_for("WALK_IN_PLACE") == 0.0
+    assert motor.task_identity(condition) == before
+    motor.settings = motor.settings.model_copy(update={"motion_output_filter_s": None})
+    assert motor.output_filter_for("WALK_IN_PLACE") == 0.15
+    with pytest.raises(ValueError, match="buffered"):
+        ArticulatedTasks.model_validate_json(
+            motor.settings.model_copy(
+                update={
+                    "execution_mode": "feedback",
+                    "output_filter_s": 0.0,
+                    "motion_output_filter_s": 0.035,
+                }
+            ).model_dump_json()
+        )
+
+
 @pytest.mark.parametrize("sequence_observed", [True, False])
 def test_periodic_exit_requires_sequence_and_settled_endpoint_inside_same_deadline(
     timed_motor, tmp_path, sequence_observed
