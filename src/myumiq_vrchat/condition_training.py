@@ -87,6 +87,17 @@ def admissible(before, after, reference_before, reference_after, floor=0.0):
         return False
     if any(old[r["id"]]["accepted"] and not r["accepted"] for r in after):
         return False
+    original_trials = {t["seed"]: t for t in reference_before.get("trials", [])}
+    updated_trials = {t["seed"]: t for t in reference_after.get("trials", [])}
+    if original_trials.keys() != updated_trials.keys():
+        return False
+    for seed, trial in original_trials.items():
+        endpoints = trial["endpoints"]
+        updated = updated_trials[seed]["endpoints"]
+        if len(endpoints) != len(updated) or any(
+            a["settled"] and not b["settled"] for a, b in zip(endpoints, updated)
+        ):
+            return False
     # Compare complete paths, including stopping. A mean endpoint gain cannot
     # excuse a new foot slide or a much harsher acceleration in another case.
     for row in after:
@@ -157,6 +168,8 @@ def main():
     parser.add_argument("--updates", type=int, default=200)
     parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--rollout-start-steps", type=int, default=40)
+    parser.add_argument("--reference-fraction", type=float, default=0.25)
+    parser.add_argument("--reference-anchor-weight", type=float, default=0.05)
     args = parser.parse_args()
     torch.set_num_threads(1)
     torch.manual_seed(43)
@@ -243,6 +256,8 @@ def main():
         reference_floor=settings.reference_floor,
         whole_body_floor=True,
         reference_rehearsal=True,
+        reference_fraction=args.reference_fraction,
+        reference_anchor_weight=args.reference_anchor_weight,
         extra_objective_factory=ConditionObjective,
         rollout_start_steps=args.rollout_start_steps,
         progress=lambda n, loss: print(
@@ -283,6 +298,8 @@ def main():
                 objective=trainer.objective,
                 condition_weight=0.1,
                 smoothness_weight=0.04,
+                reference_fraction=args.reference_fraction,
+                reference_anchor_weight=args.reference_anchor_weight,
                 corpus_report_sha256=hashlib.sha256(
                     (corpus / "result.json").read_bytes()
                 ).hexdigest(),

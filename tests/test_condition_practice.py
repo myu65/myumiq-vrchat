@@ -70,6 +70,13 @@ def test_condition_selection_rejects_endpoint_gain_with_new_trajectory_defect():
         endpoints_worse_than_hold=0,
     )
     assert admissible(before, after, reference, reference)
+    old_reference = reference | {
+        "trials": [{"seed": 0, "endpoints": [{"settled": True}, {"settled": False}]}]
+    }
+    new_reference = reference | {
+        "trials": [{"seed": 0, "endpoints": [{"settled": False}, {"settled": True}]}]
+    }
+    assert not admissible(before, after, old_reference, new_reference)
     for key in quality:
         defective = deepcopy(after)
         defective[0]["motion_quality"][key] = 100
@@ -222,6 +229,10 @@ def test_practice_cli_loads_strict_json_and_evaluates_deterministically(tmp_path
             "1",
             "--rollout-start-steps",
             "0",
+            "--reference-fraction",
+            "0.5",
+            "--reference-anchor-weight",
+            "0.5",
         ],
     )
     main()

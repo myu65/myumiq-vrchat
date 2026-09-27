@@ -52,6 +52,8 @@ class ExperienceRefinementTrainer(TorchTrainer):
         extra_objective_factory=None,
         rollout_start_steps=0,
         progress=None,
+        reference_fraction=0.25,
+        reference_anchor_weight=None,
     ):
         if not 1 <= updates <= 1000 or not 1 <= horizon <= 8 or not 1 <= batch_size <= 64:
             raise ValueError("invalid bounded replay refinement budget")
@@ -72,6 +74,12 @@ class ExperienceRefinementTrainer(TorchTrainer):
         self.extra_objective_factory = extra_objective_factory
         self.rollout_start_steps = rollout_start_steps
         self.progress = progress
+        if not 0 < reference_fraction < 1:
+            raise ValueError("reference fraction must leave room for task examples")
+        if reference_anchor_weight is not None and not 0 < reference_anchor_weight <= 1:
+            raise ValueError("invalid reference anchor weight")
+        self.reference_fraction = reference_fraction
+        self.reference_anchor_weight = reference_anchor_weight or anchor_weight
         self.objective = dict(
             reference_floor=reference_floor,
             floor_weight=floor_weight,
@@ -113,7 +121,9 @@ class ExperienceRefinementTrainer(TorchTrainer):
             if not references:
                 raise ValueError("reference rehearsal data is empty")
             cases.extend(references)
-            reference_count = max(1, self.batch_size // 4)
+            reference_count = min(
+                self.batch_size - 1, max(1, int(self.batch_size * self.reference_fraction))
+            )
         rng = np.random.default_rng(43)
         tensors = {
             key: torch.tensor(np.stack([getattr(c, key) for c in cases]), dtype=torch.float32)
@@ -183,7 +193,10 @@ class ExperienceRefinementTrainer(TorchTrainer):
                         current, after, goal, rates, previous, **self.objective
                     ).values()
                 )
-                reward = reward - self.anchor_weight * (action - anchored).square().mean(1)
+                anchor_weights = action.new_full((self.batch_size,), self.anchor_weight)
+                if reference_count:
+                    anchor_weights[-reference_count:] = self.reference_anchor_weight
+                reward = reward - anchor_weights * (action - anchored).square().mean(1)
                 if extra_objective is not None:
                     reward = reward + extra_objective(indices, current, after, rates, previous, dt)
                 if self.whole_body_floor and self.objective["reference_floor"] is not None:
