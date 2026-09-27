@@ -462,6 +462,187 @@ def test_complete_finite_sequence_settles_while_periodic_gait_keeps_running(time
     assert bool(motor.controller.steps_executed) is periodic
 
 
+def configured_cycle(motor, states, tmp_path):
+    from myumiq_vrchat.motion_prior import MotionReference
+    from myumiq_vrchat.whole_body import PeriodicImitation
+
+    current = motor.controller.rig.forward(states[0])
+    model = PeriodicImitation.fit([(float(t), current) for t in np.linspace(0, 1, 81)], 1, "test")
+    ref = MotionReference(policy=tmp_path / "unused", sha256="a" * 64, exit_goal="STAND")
+    motor.install_motion("WALK_IN_PLACE", model, ref)
+    motor.controller.state, motor.controller.expected = states[0], current
+    return current, ref
+
+
+@pytest.mark.parametrize("sequence_observed", [True, False])
+def test_periodic_exit_requires_sequence_and_settled_endpoint_inside_same_deadline(
+    timed_motor, tmp_path, sequence_observed
+):
+    motor, states, _ = timed_motor
+    current, ref = configured_cycle(motor, states, tmp_path)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=10.0), "test")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    motor.playback.completed = sequence_observed
+    assert motor.execution.deadline == 20.0
+    assert motor.goal_evidence(simulated_body(current, 15.9), 15.9, 7)["success"] is False
+    motor.step(simulated_body(current, 16.0), choice, 16.0, 0.02)
+    assert motor.motion_exit.started_at == 16.0
+    phase = motor.playback.phase
+    for now in (16.05, 16.1, 16.25, 16.3, 16.45):
+        motor.step(simulated_body(current, now), choice, now, 0.02)
+    assert motor.execution.deadline == 20.0 and motor.playback.phase == phase
+    assert motor.timing(choice, 16.45)["phase"] == ("completed" if sequence_observed else "running")
+    evidence = motor.goal_evidence(simulated_body(current, 16.45), 16.45, 7)
+    assert evidence["success"] is sequence_observed
+    assert evidence["position_tolerance_m"] == ref.exit_position_tolerance_m
+    assert evidence["motion_reference"]["exit_goal"] == "STAND"
+    if not sequence_observed:
+        motor.step(simulated_body(current, 20.0), choice, 20.0, 0.02)
+        assert motor.timing(choice, 20.0)["phase"] == "expired"
+        assert motor.learning_metadata is None  # no extra lease to finish a missed sequence
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_periodic_exit_does_not_run_after_cancellation_or_replacement(
+    timed_motor, tmp_path, cancel
+):
+    motor, states, _ = timed_motor
+    current, _ = configured_cycle(motor, states, tmp_path)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=10.0), "test")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    if cancel:
+        motor.hold()
+        motor.step(simulated_body(current, 17.0), choice, 17.0, 0.02)
+        assert motor.timing(choice, 17.0)["phase"] == "cancelled"
+        assert motor.motion_exit.started_at is None
+        assert motor.learning_metadata is None
+    else:
+        next_choice = (8, 17.0, Intent(skill="STAND", duration_s=3.0), "test")
+        motor.step(simulated_body(current, 17.0), next_choice, 17.0, 0.02)
+        assert motor.motion_exit is None and motor.playback is None and motor.key == 8
+
+
+def test_navigation_gait_ignores_standalone_exit_and_keeps_identity(timed_motor, tmp_path):
+    from types import SimpleNamespace
+
+    motor, states, _ = timed_motor
+    current, _ = configured_cycle(motor, states, tmp_path)
+    motor.locomotion_state = SimpleNamespace(gait_speed_scale=0.5)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=3.0), "navigation")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    assert motor.error is None and motor.motion_exit is None
+    assert "exit_goal_sha256" not in motor.task_identity(Intent(skill="EXPLORE_HOME"))
+    assert "exit_goal_sha256" in motor.task_identity(Intent(skill="WALK_IN_PLACE"))
+
+
+def test_periodic_exit_rejects_undefined_posture_and_insufficient_time(timed_motor, tmp_path):
+    from myumiq_vrchat.motion_prior import FiniteImitation
+
+    motor, states, _ = timed_motor
+    current, ref = configured_cycle(motor, states, tmp_path)
+    invalid = ref.model_copy(update={"exit_goal": "POSTURE_MISSING"})
+    settings = motor.settings.model_dump(mode="json")
+    settings["motions"] = {"WALK_IN_PLACE": invalid.model_dump(mode="json")}
+    with pytest.raises(ValueError, match="configured posture"):
+        ArticulatedTasks.model_validate_json(json.dumps(settings))
+    with pytest.raises(ValueError, match="periodic motion"):
+        finite = FiniteImitation.fit([(float(t), current) for t in np.linspace(0, 1, 81)], 1, "t")
+        motor.install_motion("MOTION_TEST", finite, ref)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=4.0), "test")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    assert motor.timing(choice, 10.0)["phase"] == "failed"
+    assert "reserved exit time" in motor.error
+
+
+def test_periodic_exit_discards_queued_horizon_and_rejects_raised_foot(timed_motor, tmp_path):
+    from threading import Event
+
+    from myumiq_vrchat.buffered_actor import BufferedActor
+
+    motor, states, _ = timed_motor
+    current, _ = configured_cycle(motor, states, tmp_path)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=10.0), "test")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    motor.playback.completed = True
+    motor.controller = BufferedActor(motor.controller)
+    motor.settings = motor.settings.model_copy(update={"execution_mode": "buffered"})
+    queued, cancelled = Future(), Event()
+    motor.controller.job = queued, motor.controller.epoch, 16.5, cancelled
+    motor.step(simulated_body(current, 16.0), choice, 16.0, 0.02)
+    assert cancelled.is_set() and motor.controller.reference is None
+    raised = vector(current)
+    raised[-1, 2] += 0.06
+    evidence = motor.goal_evidence(simulated_body(target_from_vector(raised), 16.1), 16.1, 7)
+    assert evidence["success"] is False and not evidence["endpoint_within_tolerance"]
+    # A late result of the cancelled gait cannot become a new standing horizon.
+    queued.set_result([])
+    motor.step(simulated_body(current, 16.15), choice, 16.15, 0.02)
+    assert motor.controller.horizons == 0
+
+
+def test_periodic_exit_declares_different_position_bounds_per_part(timed_motor, tmp_path):
+    from myumiq_vrchat.articulated_tasks import MotionExit
+    from myumiq_vrchat.motion_prior import MotionReference
+    from myumiq_vrchat.whole_body import PARTS
+
+    motor, states, _ = timed_motor
+    current, ref = configured_cycle(motor, states, tmp_path)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=10.0), "test")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    motor.playback.completed = True
+    ref = MotionReference.model_validate_json(
+        ref.model_copy(
+            update={
+                "exit_position_tolerance_m": 0.08,
+                "exit_position_tolerances_m": {"left_foot": 0.02},
+            }
+        ).model_dump_json()
+    )
+    motor.motion_exit = MotionExit(ref, current, started_at=16.0)
+    motor.pose_goal = current
+    nearby = vector(current)
+    nearby[PARTS.index("left_elbow"), 2] += 0.06
+    evidence = motor.goal_evidence(simulated_body(target_from_vector(nearby), 16.1), 16.1, 7)
+    assert evidence["success"] is True
+    assert evidence["position_tolerances_m"]["left_foot"] == 0.02
+    nearby[PARTS.index("left_foot"), 2] += 0.03
+    assert not motor.goal_evidence(simulated_body(target_from_vector(nearby), 16.1), 16.1, 7)[
+        "success"
+    ]
+    for overrides in ({"unknown": 0.02}, {"left_foot": 0.13}):
+        with pytest.raises(ValueError, match="known body parts"):
+            MotionReference.model_validate_json(
+                ref.model_copy(update={"exit_position_tolerances_m": overrides}).model_dump_json()
+            )
+
+
+def test_exit_holds_one_pose_until_delayed_gait_packets_retire_before_fitting(
+    timed_motor, tmp_path
+):
+    from myumiq_vrchat.buffered_actor import BufferedActor
+
+    motor, states, jobs = timed_motor
+    current, _ = configured_cycle(motor, states, tmp_path)
+    choice = (7, 10.0, Intent(skill="WALK_IN_PLACE", duration_s=10.0), "test")
+    motor.step(simulated_body(current, 10.0), choice, 10.0, 0.02)
+    motor.controller = BufferedActor(motor.controller)
+    motor.settings = motor.settings.model_copy(update={"execution_mode": "buffered"})
+    assert motor.step(simulated_body(current, 16.0), choice, 16.0, 0.02) == current
+    delayed = vector(current)
+    delayed[0, 0] += 0.01
+    delayed = target_from_vector(delayed)
+    assert motor.step(simulated_body(delayed, 16.2), choice, 16.2, 0.02) == current
+    assert not jobs  # no fit of the transient packet
+    assert motor.step(simulated_body(current, 16.3), choice, 16.3, 0.02) == current
+    assert len(jobs) == 1
+    # Fixed hold continues until the measured fit completes; no old gait resumes.
+    assert motor.step(simulated_body(current, 16.4), choice, 16.4, 0.02) == current
+    jobs[0][0].set_result((states[0], {}))
+    motor.step(simulated_body(current, 16.5), choice, 16.5, 0.02)
+    assert motor.motion_exit.prepared and motor.error is None
+    assert motor.execution.deadline == 20.0
+
+
 def test_facing_holds_without_actor_steps_during_brief_visual_loss(timed_motor):
     from test_body_facing import world
 

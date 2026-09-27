@@ -1638,3 +1638,18 @@ The origin affects goals only; it never publishes a neutral pose on completion.
 When a bent pelvis points its forward axis vertically, use its orthogonal lateral
 axis to define horizontal task heading. Such a pose is not invalid tracking and
 must not prevent the next motion or posture request from being attempted.
+
+A periodic motion may explicitly name an `exit_goal` from the configured posture
+catalogue. Reserve `exit_duration_s` inside its existing action deadline for the
+same actor to reach that posture; discard queued cyclic horizons at the switch.
+This is part of that motion's planned trajectory, not a global default-pose reset.
+Completion requires the observed sequence and fresh, settled endpoint feedback
+within the declared exit tolerance. A timeout, cancellation or replacement never
+extends the output lease to finish the exit. Controller navigation does not use
+this standalone-motion exit; its gait still follows the locomotion state.
+Optional per-part position limits override the default exit limit, so an explicit
+task can demand precise feet without requiring identical accuracy from its elbows.
+Record every part's limit and measured error; changing them changes task identity.
+At this boundary, hold one measured pose until fresh device packets match it,
+then refit while continuing that same hold. This short drain of the old gait's
+packets consumes the reserved exit time; it never adds time after the deadline.

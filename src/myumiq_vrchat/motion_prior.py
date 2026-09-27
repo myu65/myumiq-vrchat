@@ -11,7 +11,7 @@ from pydantic import Field, model_validator
 
 from .body import Frozen, Number, qmul, rotate
 from .tracker_policy import pose_error
-from .whole_body import PeriodicImitation, target_from_vector, vector
+from .whole_body import PARTS, PeriodicImitation, target_from_vector, vector
 
 
 def basis(phase, count):
@@ -76,6 +76,20 @@ class MotionReference(Frozen):
     execution_timeout_s: Number | None = Field(default=None, ge=1, le=20)
     hand: Literal["left", "right"] | None = None
     description: str = Field(default="", max_length=80)
+    exit_goal: str | None = Field(default=None, min_length=1, max_length=80)
+    exit_duration_s: Number = Field(default=4.0, ge=0.5, le=8.0)
+    exit_position_tolerance_m: Number = Field(default=0.04, ge=0.01, le=0.12)
+    exit_position_tolerances_m: dict[str, Number] = Field(default_factory=dict, max_length=11)
+
+    @model_validator(mode="after")
+    def exit_tolerances(self):
+        if self.exit_position_tolerances_m and self.exit_goal is None:
+            raise ValueError("exit tolerances require an explicit exit_goal")
+        if set(self.exit_position_tolerances_m) - set(PARTS) or any(
+            not 0.01 <= value <= 0.12 for value in self.exit_position_tolerances_m.values()
+        ):
+            raise ValueError("exit tolerances require known body parts and 0.01..0.12 metres")
+        return self
 
     def load(self, floor):
         from .cli import outside_repo

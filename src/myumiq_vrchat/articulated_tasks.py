@@ -9,7 +9,7 @@ from typing import Literal
 import numpy as np
 from pydantic import Field, model_validator
 
-from .articulated_controller import ArticulatedController
+from .articulated_controller import ArticulatedController, close_enough
 from .body import BodyTarget, Controls, Frozen, Number, WorldState, qmul, rotate
 from .body_facing import BodyFacing
 from .capabilities import motion_capability, posture_capability
@@ -55,6 +55,8 @@ class ArticulatedTasks(Frozen):
         for name, motion in self.motions.items():
             if (name == "WAVE") != (motion.hand is not None):
                 raise ValueError("only a WAVE motion must declare its demonstrated hand")
+            if motion.exit_goal is not None and motion.exit_goal not in self.goals:
+                raise ValueError("motion exit_goal must name a configured posture")
         for pose in self.goals.values():
             if (
                 not pose.is_full_body
@@ -118,6 +120,15 @@ class ActionExecution:
         }
 
 
+@dataclass
+class MotionExit:
+    reference: MotionReference
+    pose: BodyTarget
+    started_at: float | None = None
+    hold_pose: BodyTarget | None = None
+    prepared: bool = False
+
+
 class ArticulatedIntentMotor:
     def __init__(self, path):
         self.settings = ArticulatedTasks.model_validate_json(outside_repo(path).read_text("utf-8"))
@@ -145,6 +156,7 @@ class ArticulatedIntentMotor:
         self.completed_evidence = None
         self.motions = {}
         self.playback = None
+        self.motion_exit = None
         self.locomotion_state = None
         self.motion_origin_xy = None
         self.facing = None
@@ -164,6 +176,13 @@ class ArticulatedIntentMotor:
         if not motion_capability(name) or (name == "WAVE") != (reference.hand is not None):
             raise ValueError("unsupported motion capability or hand")
         validate_motion(model, self.settings.reference_floor)
+        if reference.exit_goal is not None:
+            from .whole_body import PeriodicImitation
+
+            if not isinstance(model, PeriodicImitation):
+                raise ValueError("only a periodic motion can declare an exit_goal")
+            if reference.exit_goal not in self.settings.goals:
+                raise ValueError("motion exit_goal must name a configured posture")
         if posture_capability(name):
             from .motion_prior import FiniteImitation
 
@@ -213,7 +232,7 @@ class ArticulatedIntentMotor:
             "WALK_IN_PLACE" if intent.skill in NAVIGATION_SKILLS else intent.skill
         )
         if motion:
-            return fitting | {
+            identity = fitting | {
                 "reference_control": "confirmed_feedback_phase_v1",
                 "motion_anchor": self.settings.motion_anchor,
                 "motion_evaluation": "observed_sequence_v1",
@@ -221,6 +240,18 @@ class ArticulatedIntentMotor:
                 "playback_rate": motion[1].playback_rate,
                 "duration_s": intent.duration_s,
             }
+            reference = motion[1]
+            if reference.exit_goal is not None and intent.skill not in NAVIGATION_SKILLS:
+                identity.update(
+                    motion_evaluation="observed_sequence_and_exit_v1",
+                    exit_goal_sha256=hashlib.sha256(
+                        self.settings.goals[reference.exit_goal].model_dump_json().encode()
+                    ).hexdigest(),
+                    exit_duration_s=reference.exit_duration_s,
+                    exit_position_tolerance_m=reference.exit_position_tolerance_m,
+                    exit_position_tolerances_m=reference.exit_position_tolerances_m,
+                )
+            return identity
         goal = self.settings.goals.get(intent.skill)
         return fitting | (
             {
@@ -300,6 +331,7 @@ class ArticulatedIntentMotor:
             self.pose_goal = self.terminal_pose = None
             self.settling = None
             self.playback = None
+            self.motion_exit = None
             self.facing = None
         if not self.supports(intent):
             self.error = "intent has no learned task goal"
@@ -324,6 +356,13 @@ class ArticulatedIntentMotor:
                         else None,
                     )
                     self.pose_goal = self.playback.target()
+                    if reference.exit_goal is not None and self.locomotion_state is None:
+                        if intent.duration_s <= reference.exit_duration_s:
+                            raise ValueError("motion duration must exceed its reserved exit time")
+                        self.motion_exit = MotionExit(
+                            reference,
+                            anchored_goal(self.settings.goals[reference.exit_goal], current),
+                        )
                 else:
                     self.pose_goal = anchored_goal(self.settings.goals[intent.skill], current)
             except ValueError as exc:
@@ -335,6 +374,31 @@ class ArticulatedIntentMotor:
         self.active = True
         if self.conditions.retiring():
             return current
+        exit_motion = self.motion_exit
+        if (
+            exit_motion is not None
+            and exit_motion.started_at is None
+            and self.execution.deadline is not None
+            and now >= self.execution.deadline - exit_motion.reference.exit_duration_s
+        ):
+            # Keep the same intent and deadline, but retire every queued gait
+            # horizon before fitting the measured pose for the planned endpoint.
+            self.controller.new_goal()
+            self.pose_goal = exit_motion.pose
+            self.settling = None
+            exit_motion.started_at = now
+            exit_motion.hold_pose = current
+        exiting = exit_motion is not None and exit_motion.started_at is not None
+        if exiting and not exit_motion.prepared:
+            signals = [body.signal_for(part) for part in PARTS]
+            if not all(s.valid and s.connected and 0 <= now - s.timestamp < 0.5 for s in signals):
+                return self._finish(current, "motion exit lost fresh device feedback")
+            # Let the final gait packets retire while publishing one fixed pose.
+            # Fitting a moving snapshot would fail even with healthy devices.
+            if now - exit_motion.started_at < 0.15 or not close_enough(
+                exit_motion.hold_pose, current, 0.002, 0.015
+            ):
+                return exit_motion.hold_pose
         if self.facing:
             available = self.facing.observe(current, self.world, now)
             if self.facing.error:
@@ -346,6 +410,10 @@ class ArticulatedIntentMotor:
         self.controller.observe(body, now)
         if self.controller.error:
             return self._finish(current, self.controller.error)
+        if exiting and not exit_motion.prepared:
+            if not self.controller.ready:
+                return exit_motion.hold_pose
+            exit_motion.prepared = True
         starting = self.execution.started_at is None
         if starting and not self.controller.ready:
             return self.controller.hold_target or current
@@ -372,6 +440,7 @@ class ArticulatedIntentMotor:
                 intent.skill in self.settings.goals
                 or intent.skill == "BODY_GOAL"
                 or finite_complete
+                or exiting
                 or self.facing
             )
         ):
@@ -397,7 +466,7 @@ class ArticulatedIntentMotor:
                 # pose instead of issuing further increments that may drift out.
                 return current
             self.settling = None
-        if self.playback and self.controller.ready:
+        if self.playback and not exiting and self.controller.ready:
             signals = [body.signal_for(part) for part in PARTS]
             if all(s.valid and s.connected and 0 <= now - s.timestamp < 0.5 for s in signals):
                 locomotion = getattr(self, "locomotion_state", None)
@@ -412,7 +481,7 @@ class ArticulatedIntentMotor:
         if self.settings.execution_mode == "buffered":
             import copy
 
-            reference = copy.copy(self.playback) if self.playback else None
+            reference = copy.copy(self.playback) if self.playback and not exiting else None
             speed = self.locomotion_state.gait_speed_scale if self.locomotion_state else 1.0
             self.controller.reference = (
                 (
@@ -425,9 +494,14 @@ class ArticulatedIntentMotor:
                 else None
             )
         deadline = now + intent.duration_s if starting else self.execution.deadline
+        horizon_deadline = (
+            deadline - exit_motion.reference.exit_duration_s
+            if exit_motion is not None and not exiting
+            else deadline
+        )
         action_dt = min(dt, deadline - now)
         action, obs, rates = self.controller.step(
-            body, self.pose_goal, action_dt, remaining_s=deadline - now
+            body, self.pose_goal, action_dt, remaining_s=horizon_deadline - now
         )
         if self.controller.error:
             return self._finish(current, self.controller.error)
@@ -449,7 +523,7 @@ class ArticulatedIntentMotor:
                 "goal_owner": "autonomous",
                 "intent_generation": key,
                 "execution": self.execution.snapshot(now),
-                "motion_reference": self.playback.evidence() if self.playback else None,
+                "motion_reference": self._motion_evidence(),
                 "facing_reference": self.facing.evidence(self.world, now) if self.facing else None,
                 "condition_goal": self.conditions.report,
                 **self.controller.last_metadata,
@@ -479,7 +553,7 @@ class ArticulatedIntentMotor:
                 | ({"LOOK_AT"} if self.settings.facing else set())
                 | ({"BODY_GOAL"} if self.settings.condition_goals else set())
             ),
-            "motion_reference": self.playback.evidence() if self.playback else None,
+            "motion_reference": self._motion_evidence(),
             "condition_goal": self.conditions.report,
             "goal_evidence": self.completed_evidence,
             **self.controller.status(),
@@ -509,13 +583,26 @@ class ArticulatedIntentMotor:
         position = float(np.linalg.norm(error[:, :3], axis=1).max())
         angle = float(np.linalg.norm(error[:, 3:], axis=1).max())
         playback = getattr(self, "playback", None)
-        motion = playback.evidence() if playback else None
-        endpoint = position <= 0.12 and angle <= 0.35
+        motion = self._motion_evidence()
+        exit_motion = getattr(self, "motion_exit", None)
+        tolerance = exit_motion.reference.exit_position_tolerance_m if exit_motion else 0.12
+        endpoint = position <= tolerance and angle <= 0.35
+        part_tolerances = exit_motion.reference.exit_position_tolerances_m if exit_motion else {}
+        if part_tolerances:
+            endpoint = bool(
+                all(
+                    np.linalg.norm(row[:3]) <= part_tolerances.get(part, tolerance)
+                    for part, row in zip(PARTS, error)
+                )
+                and angle <= 0.35
+            )
         completed = (
             endpoint
             if not playback
             else playback.completed and (endpoint if motion["endpoint_required"] else True)
         )
+        if exit_motion:
+            completed = completed and exit_motion.started_at is not None
         scope = "simulated_tracker" if sources == {"simulated"} else "device_tracker"
         result = {
             **evidence,
@@ -525,12 +612,19 @@ class ArticulatedIntentMotor:
             "endpoint_within_tolerance": endpoint,
             "maximum_position_error_m": position,
             "maximum_rotation_error_rad": angle,
-            "position_tolerance_m": 0.12,
+            "position_tolerance_m": tolerance,
             "rotation_tolerance_rad": 0.35,
             "actor_error": getattr(self, "error", None) or self.controller.error,
             "avatar_verified": False,
             "motion_reference": motion,
         }
+        if part_tolerances:
+            result["position_errors_m"] = {
+                part: float(np.linalg.norm(row[:3])) for part, row in zip(PARTS, error)
+            }
+            result["position_tolerances_m"] = {
+                part: part_tolerances.get(part, tolerance) for part in PARTS
+            }
         facing = getattr(self, "facing", None)
         conditions = getattr(self, "conditions", None)
         if conditions and conditions.resolved:
@@ -545,6 +639,23 @@ class ArticulatedIntentMotor:
         if facing:
             visual = facing.evidence(self.world, now)
             result.update(visual, success=visual["success"] if result["success"] else False)
+        return result
+
+    def _motion_evidence(self):
+        playback = getattr(self, "playback", None)
+        if playback is None:
+            return None
+        result = playback.evidence()
+        exit_motion = getattr(self, "motion_exit", None)
+        if exit_motion:
+            result = result | {
+                "endpoint_required": True,
+                "exit_goal": exit_motion.reference.exit_goal,
+                "exit_started_at": exit_motion.started_at,
+                "exit_duration_s": exit_motion.reference.exit_duration_s,
+                "exit_position_tolerance_m": exit_motion.reference.exit_position_tolerance_m,
+                "exit_position_tolerances_m": exit_motion.reference.exit_position_tolerances_m,
+            }
         return result
 
     def close(self):
