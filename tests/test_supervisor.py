@@ -188,6 +188,67 @@ def test_heartbeat_only_does_not_refresh_the_target(tmp_path):
     assert any(x.get("reason") == "target_timeout" for x in events)
 
 
+def test_expiry_inside_freshness_validation_preserves_timeout_cleanup(tmp_path, monkeypatch):
+    from queue import Queue
+    from threading import Event, Thread
+    from types import SimpleNamespace
+
+    from myumiq_vrchat.backends import supervisor as module
+
+    class BoundaryBackend(module.VMTBackend):
+        def submit(self, lease, sequence, stamp, target):
+            if sequence == 1:
+                self._clock = lambda: time.perf_counter() + 1
+                raise ValueError("message must be fresh in the shared monotonic clock domain")
+            return super().submit(lease, sequence, stamp, target)
+
+    monkeypatch.setattr(module, "VMTBackend", BoundaryBackend)
+    ready, stop, failed = Queue(), Event(), Event()
+    log = tmp_path / "boundary.jsonl"
+    worker = Thread(
+        target=module._worker,
+        args=(
+            None,
+            SafetyConfig(),
+            "test-token",
+            SimpleNamespace(send=ready.put, close=lambda: None),
+            stop,
+            failed,
+            log,
+        ),
+    )
+    worker.start()
+    try:
+        port = ready.get(timeout=5)["port"]
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(
+                json.dumps(
+                    dict(
+                        kind="frame",
+                        token="test-token",
+                        sequence=0,
+                        timestamp=time.perf_counter(),
+                        target=rest_target().model_dump(mode="json"),
+                    )
+                ).encode(),
+                ("127.0.0.1", port),
+            )
+        worker.join(4)
+        assert not worker.is_alive() and failed.is_set()
+        events = [json.loads(row) for row in log.read_text().splitlines()]
+        assert [row["state"] for row in events if "state" in row] == [
+            "waiting",
+            "active",
+            "timed_out",
+            "closed",
+        ]
+        assert not any("error" in row or "rejected" in row for row in events)
+        assert events[-1]["errors"] == []
+    finally:
+        stop.set()
+        worker.join(5)
+
+
 def test_safe_pose_timeout_releases_inputs_without_disconnecting(tmp_path, endpoints):
     from myumiq_vrchat.backends.osc import LiveConfig
 
@@ -254,7 +315,7 @@ if __name__ == "__main__":
             break
         time.sleep(0.02)
     assert any(x.get("state") == "active" for x in events)
-    assert any(x.get("state") == "timed_out" for x in events)
+    assert any(x.get("state") == "timed_out" for x in events), events
     assert events[-1]["state"] == "closed"
     assert not events[-1]["errors"]
     assert_released(messages)

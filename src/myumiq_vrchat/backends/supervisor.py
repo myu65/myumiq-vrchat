@@ -109,9 +109,12 @@ def _worker(config_json, safety, token, ready, stop, failed, log_path):
                     # its original timestamp so the existing watchdog still expires.
                     try:
                         backend.submit(lease, output_sequence, compositor.stamps["pose"], target)
-                    except LifecycleError:
+                    except (LifecycleError, ValueError):
                         # Expiry between poll and submission must still follow
-                        # the normal neutral/disable retry lifecycle.
+                        # the normal neutral/disable retry lifecycle. The clock
+                        # can cross expiry inside message freshness validation,
+                        # after the backend's own lease check has passed.
+                        backend.poll()
                         if backend.status.state != State.TIMED_OUT:
                             raise
                         record()
